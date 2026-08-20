@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>ControlTower.Infrastructure</RootNamespace>
+    <AssemblyName>ControlTower.Infrastructure</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\ControlTower.Core\ControlTower.Core.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="SSH.NET" />
+    <PackageReference Include="Velopack" />
+    <PackageReference Include="YamlDotNet" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="ControlTower.Tests" />
+  </ItemGroup>
+</Project>

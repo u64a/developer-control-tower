@@ -1,0 +1,151 @@
+<Window x:Class="ControlTower.Desktop.LibraryWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="clr-namespace:ControlTower.Desktop.Controls"
+        Title="Asset Library"
+        Icon="Assets/app-icon.png"
+        Height="640"
+        Width="900"
+        MinHeight="480"
+        MinWidth="720"
+        WindowStartupLocation="CenterOwner"
+        Style="{StaticResource BaseWindowStyle}"
+        Background="{DynamicResource WindowBackgroundBrush}"
+        Foreground="{DynamicResource PrimaryTextBrush}">
+    <DockPanel>
+    <controls:WindowTitleBar DockPanel.Dock="Top" />
+    <Border DockPanel.Dock="Top" Height="3" Background="{StaticResource BrandStripBrush}" />
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <StackPanel Grid.Row="0" Margin="0,0,0,12">
+            <TextBlock Text="Asset Library"
+                       Style="{StaticResource SubtitleTextStyle}" />
+            <TextBlock x:Name="LibraryRootText"
+                       FontFamily="{StaticResource MonoFontFamily}"
+                       FontSize="11"
+                       Foreground="{DynamicResource SecondaryTextBrush}"
+                       Margin="0,2,0,0" />
+        </StackPanel>
+
+        <Border Grid.Row="1" Style="{StaticResource CardBorderStyle}">
+            <Grid>
+                <Grid x:Name="MainContent">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="280" />
+                    <ColumnDefinition Width="12" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+
+                <TreeView x:Name="AssetTree"
+                          Grid.Column="0"
+                          BorderThickness="0"
+                          Background="Transparent"
+                          VirtualizingPanel.IsVirtualizing="True"
+                          VirtualizingPanel.VirtualizationMode="Recycling"
+                          ScrollViewer.CanContentScroll="True"
+                          SelectedItemChanged="AssetTree_SelectedItemChanged">
+                    <TreeView.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <VirtualizingStackPanel />
+                        </ItemsPanelTemplate>
+                    </TreeView.ItemsPanel>
+                </TreeView>
+
+                <Border Grid.Column="2" Style="{StaticResource InsetCardBorderStyle}" Padding="14">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+
+                        <StackPanel Grid.Row="0" Margin="0,0,0,10">
+                            <TextBlock x:Name="AssetTitleText"
+                                       FontSize="16"
+                                       FontWeight="SemiBold"
+                                       Text="Select an asset" />
+                            <TextBlock x:Name="AssetMetaText"
+                                       FontFamily="{StaticResource MonoFontFamily}"
+                                       FontSize="11"
+                                       Foreground="{DynamicResource SecondaryTextBrush}"
+                                       Margin="0,4,0,0" />
+                        </StackPanel>
+
+                        <TextBlock Grid.Row="1"
+                                   x:Name="AssetDescriptionText"
+                                   TextWrapping="Wrap"
+                                   Margin="0,0,0,12" />
+
+                        <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,0,0,10">
+                            <Button Style="{StaticResource PrimaryButtonStyle}"
+                                    Click="PushClick"
+                                    x:Name="PushButton"
+                                    IsEnabled="False">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock FontFamily="{StaticResource SymbolIconFont}" Text="&#xE898;" Margin="0,0,8,0" />
+                                    <TextBlock Text="Push to project..." />
+                                </StackPanel>
+                            </Button>
+                            <Button Click="PushManyClick"
+                                    x:Name="PushManyButton"
+                                    Margin="8,0,0,0"
+                                    IsEnabled="False">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock FontFamily="{StaticResource SymbolIconFont}" Text="&#xE8FA;" Margin="0,0,8,0" />
+                                    <TextBlock Text="Push to many..." />
+                                </StackPanel>
+                            </Button>
+                            <Button Click="PullClick"
+                                    x:Name="PullButton"
+                                    Margin="8,0,0,0"
+                                    IsEnabled="False">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock FontFamily="{StaticResource SymbolIconFont}" Text="&#xE896;" Margin="0,0,8,0" />
+                                    <TextBlock Text="Pull update..." />
+                                </StackPanel>
+                            </Button>
+                        </StackPanel>
+
+                        <Border Grid.Row="3" Style="{StaticResource InsetCardBorderStyle}" Padding="10">
+                            <ListBox x:Name="AssetFilesList"
+                                     BorderThickness="0"
+                                     Background="Transparent"
+                                     FontFamily="Cascadia Mono, Consolas, monospace"
+                                     FontSize="12"
+                                     ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                                     ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                     VirtualizingPanel.IsVirtualizing="True"
+                                     VirtualizingPanel.VirtualizationMode="Recycling"
+                                     VirtualizingPanel.ScrollUnit="Pixel" />
+                        </Border>
+                    </Grid>
+                </Border>
+                </Grid>
+                <controls:EmptyStatePresenter x:Name="EmptyState"
+                                              Visibility="Collapsed"
+                                              Glyph="&#xE8F1;"
+                                              Heading="No assets captured yet"
+                                              Hint="Capture a folder from a project to add it to the library." />
+            </Grid>
+        </Border>
+
+        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
+            <Button Click="CaptureClick" Width="160">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock FontFamily="{StaticResource SymbolIconFont}" Text="&#xE896;" Margin="0,0,8,0" />
+                    <TextBlock Text="Capture from project..." />
+                </StackPanel>
+            </Button>
+            <Button Style="{StaticResource RailButtonStyle}" Click="CloseClick" Width="100" Margin="8,0,0,0">
+                <TextBlock Text="Close" />
+            </Button>
+        </StackPanel>
+    </Grid>
+    </DockPanel>
+</Window>

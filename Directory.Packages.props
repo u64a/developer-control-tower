@@ -1,0 +1,31 @@
+<Project>
+
+  <!--
+    Central Package Management (CPM) — all NuGet versions live here.
+
+    To add a new package:
+      1. Add a <PackageVersion> entry below.
+      2. Reference it in the consuming project's <PackageReference> WITHOUT a Version attribute.
+
+    See https://learn.microsoft.com/en-us/nuget/consume-packages/Central-Package-Management
+  -->
+
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Production -->
+    <PackageVersion Include="SSH.NET" Version="2026.0.0" />
+    <PackageVersion Include="Velopack" Version="1.2.0" />
+    <PackageVersion Include="YamlDotNet" Version="16.3.0" />
+
+    <!-- Test -->
+    <PackageVersion Include="coverlet.collector" Version="6.0.4" />
+    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageVersion Include="xunit" Version="2.9.3" />
+    <PackageVersion Include="xunit.runner.visualstudio" Version="2.8.2" />
+  </ItemGroup>
+
+</Project>

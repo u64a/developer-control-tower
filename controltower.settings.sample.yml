@@ -1,0 +1,13 @@
+kind: developer-control-tower/settings
+schema_version: 1
+
+tooling:
+  vscode_command: code
+  git_command: git
+  ssh_command: ssh
+  ssh_config_path:
+
+security:
+  allow_http_links: false
+  github_credential_target: DCT-GitHub
+  ado_credential_target: DCT-Ado

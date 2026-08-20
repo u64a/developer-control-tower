@@ -1,0 +1,32 @@
+<UserControl x:Class="ControlTower.Desktop.Controls.EmptyStatePresenter"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <UserControl.Resources>
+        <Style TargetType="UserControl">
+            <Setter Property="HorizontalContentAlignment" Value="Center" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+        </Style>
+    </UserControl.Resources>
+    <Grid HorizontalAlignment="Center" VerticalAlignment="Center" Margin="24">
+        <StackPanel HorizontalAlignment="Center">
+            <TextBlock x:Name="GlyphText"
+                       FontFamily="{StaticResource SymbolIconFont}"
+                       FontSize="48"
+                       HorizontalAlignment="Center"
+                       Foreground="{DynamicResource SecondaryTextBrush}"
+                       Text="&#xE7C3;" />
+            <TextBlock x:Name="HeadingText"
+                       Style="{StaticResource SubtitleTextStyle}"
+                       Margin="0,12,0,0"
+                       HorizontalAlignment="Center"
+                       Text="Nothing here yet" />
+            <TextBlock x:Name="HintText"
+                       Style="{StaticResource CaptionTextStyle}"
+                       Margin="0,4,0,0"
+                       HorizontalAlignment="Center"
+                       TextWrapping="Wrap"
+                       MaxWidth="320"
+                       TextAlignment="Center" />
+        </StackPanel>
+    </Grid>
+</UserControl>
