@@ -1,0 +1,32 @@
+name: Feature request
+description: Propose a focused improvement to awareness, trust, or launch
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: User problem
+      description: What recurring cognitive load or context-switching cost should be reduced?
+    validations:
+      required: true
+  - type: textarea
+    id: flow
+    attributes:
+      label: Desired workflow
+      description: Describe the smallest useful end-to-end behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Existing platform alternatives
+      description: Could Git, VS Code, Windows, GitHub, or Azure DevOps already provide this?
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope check
+      options:
+        - label: This is not sprint tracking, capacity planning, collaboration, a dashboard, or an always-on service.
+          required: true

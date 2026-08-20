@@ -1,0 +1,162 @@
+<Window x:Class="ControlTower.Desktop.RelocateProjectDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="clr-namespace:ControlTower.Desktop.Controls"
+        Title="Relocate Project"
+        Icon="Assets/app-icon.png"
+        Height="640"
+        Width="720"
+        MinHeight="560"
+        MinWidth="680"
+        WindowStartupLocation="CenterOwner"
+        Style="{StaticResource BaseWindowStyle}"
+        Background="{DynamicResource WindowBackgroundBrush}"
+        Foreground="{DynamicResource PrimaryTextBrush}">
+    <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVis" />
+    </Window.Resources>
+    <DockPanel>
+        <controls:WindowTitleBar DockPanel.Dock="Top" />
+        <Grid Margin="16">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <!-- Header / source summary -->
+            <StackPanel Grid.Row="0" Margin="0,0,0,12">
+                <TextBlock Text="Relocate project"
+                           Style="{StaticResource SubtitleTextStyle}" />
+                <TextBlock Text="Move this project to a different store by cloning origin into the new location and rebinding the portfolio entry. Source files are preserved unless you opt in to delete."
+                           Margin="0,4,0,0"
+                           Foreground="{DynamicResource SecondaryTextBrush}"
+                           TextWrapping="Wrap" />
+            </StackPanel>
+
+            <!-- Source card -->
+            <Border Grid.Row="1" Style="{StaticResource CardBorderStyle}" Margin="0,0,0,12">
+                <Grid Margin="0">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="120" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Row="0" Grid.Column="0" Text="Project" Margin="0,0,12,6" Foreground="{DynamicResource SecondaryTextBrush}" />
+                    <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding SourceDisplayName}" Margin="0,0,0,6" />
+                    <TextBlock Grid.Row="1" Grid.Column="0" Text="Current store" Margin="0,0,12,6" Foreground="{DynamicResource SecondaryTextBrush}" />
+                    <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding SourceStoreLabel}" Margin="0,0,0,6" TextWrapping="Wrap" />
+                    <TextBlock Grid.Row="2" Grid.Column="0" Text="Current path" Margin="0,0,12,0" Foreground="{DynamicResource SecondaryTextBrush}" />
+                    <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding SourceCurrentPath}" TextWrapping="Wrap" />
+                </Grid>
+            </Border>
+
+            <!-- Target card -->
+            <Border Grid.Row="2" Style="{StaticResource CardBorderStyle}" Margin="0,0,0,12">
+                <Grid Margin="0">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="120" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Row="0" Grid.Column="0" Text="Target store" Margin="0,0,12,8" VerticalAlignment="Center" />
+                    <ComboBox Grid.Row="0" Grid.Column="1"
+                              x:Name="TargetStoreComboBox"
+                              ItemsSource="{Binding TargetStores}"
+                              SelectedItem="{Binding SelectedTargetStore, Mode=TwoWay}"
+                              Margin="0,0,0,8">
+                        <ComboBox.ItemTemplate>
+                            <DataTemplate>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="{Binding Id}" FontWeight="SemiBold" />
+                                    <TextBlock Text="  " />
+                                    <TextBlock Text="{Binding Root}" Foreground="{DynamicResource SecondaryTextBrush}" />
+                                </StackPanel>
+                            </DataTemplate>
+                        </ComboBox.ItemTemplate>
+                    </ComboBox>
+
+                    <TextBlock Grid.Row="1" Grid.Column="0" Text="Folder name" Margin="0,0,12,8" VerticalAlignment="Center" />
+                    <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding TargetFolder, UpdateSourceTrigger=PropertyChanged, Mode=TwoWay}" Margin="0,0,0,8" />
+
+                    <TextBlock Grid.Row="2" Grid.Column="0" Text="Will become" Margin="0,0,12,0" VerticalAlignment="Center" Foreground="{DynamicResource SecondaryTextBrush}" />
+                    <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding ResolvedTargetPathPreview}" TextWrapping="Wrap" />
+                </Grid>
+            </Border>
+
+            <!-- Options card -->
+            <Border Grid.Row="3" Style="{StaticResource CardBorderStyle}" Margin="0,0,0,12">
+                <StackPanel>
+                    <CheckBox IsChecked="{Binding CopyIgnoredFiles, Mode=TwoWay}"
+                              Content="Copy ignored files (.controltower is always migrated)" Margin="0,0,0,6" />
+                    <CheckBox IsChecked="{Binding DeleteSourceAfterSuccess, Mode=TwoWay}"
+                              Content="Delete source folder after success (sent to Recycle Bin for local sources)" />
+                </StackPanel>
+            </Border>
+
+            <!-- Steps card -->
+            <Border Grid.Row="4" Style="{StaticResource CardBorderStyle}" Margin="0,0,0,8">
+                <DockPanel>
+                    <TextBlock DockPanel.Dock="Top" Text="STEPS" Style="{StaticResource SectionTitleStyle}" Margin="0,0,0,6" />
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <ItemsControl ItemsSource="{Binding Steps}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid Margin="0,2,0,2">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="24" />
+                                            <ColumnDefinition Width="220" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="{Binding StateIcon}" FontFamily="Segoe UI Symbol" />
+                                        <TextBlock Grid.Column="1" Text="{Binding StepName}" />
+                                        <TextBlock Grid.Column="2" Text="{Binding Detail}" Foreground="{DynamicResource SecondaryTextBrush}" TextWrapping="Wrap" />
+                                    </Grid>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+                </DockPanel>
+            </Border>
+
+            <!-- Preflight summary -->
+            <TextBlock Grid.Row="5"
+                       Text="{Binding PreflightSummary}"
+                       Margin="0,0,0,8"
+                       Foreground="{DynamicResource SecondaryTextBrush}"
+                       TextWrapping="Wrap" />
+
+            <!-- Footer buttons -->
+            <Grid Grid.Row="6">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0"
+                           Text="{Binding StatusMessage}"
+                           VerticalAlignment="Center"
+                           Foreground="{DynamicResource SecondaryTextBrush}"
+                           TextWrapping="Wrap" />
+                <StackPanel Grid.Column="1" Orientation="Horizontal">
+                    <Button Content="Cancel" Width="90" Click="CancelClick" IsEnabled="{Binding CanCancel}" Margin="0,0,8,0" />
+                    <Button Content="Push source" Width="110" Click="PushClick" Visibility="{Binding HasNeedsPush, Converter={StaticResource BoolToVis}}" Margin="0,0,8,0" />
+                    <Button Content="Preflight" Width="110" Click="PreflightClick" IsEnabled="{Binding CanPreflight}" Margin="0,0,8,0" />
+                    <Button Style="{StaticResource PrimaryButtonStyle}" Content="Relocate" Width="120" Click="RelocateClick" IsEnabled="{Binding CanRelocate}" Margin="0,0,8,0" />
+                    <Button Content="Close" Width="90" Click="CloseClick" IsEnabled="{Binding CanClose}" />
+                </StackPanel>
+            </Grid>
+        </Grid>
+    </DockPanel>
+</Window>

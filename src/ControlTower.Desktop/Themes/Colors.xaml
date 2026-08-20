@@ -1,0 +1,32 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!-- Default semantic palette (dark theme baseline). App.xaml.cs
+         overrides these at runtime per OS theme. The keys here exist
+         so windows can DynamicResource-bind without late-binding warnings. -->
+
+    <SolidColorBrush x:Key="SuccessBrush" Color="#7BD97B" />
+    <SolidColorBrush x:Key="SuccessSubtleBrush" Color="#1E3A1E" />
+    <SolidColorBrush x:Key="CautionBrush" Color="#FFB26B" />
+    <SolidColorBrush x:Key="CautionSubtleBrush" Color="#3A2C14" />
+    <SolidColorBrush x:Key="CriticalBrush" Color="#FF6E6E" />
+    <SolidColorBrush x:Key="CriticalSubtleBrush" Color="#4A1E1E" />
+    <SolidColorBrush x:Key="InfoBrush" Color="#5AA6FF" />
+    <SolidColorBrush x:Key="InfoSubtleBrush" Color="#15304D" />
+    <SolidColorBrush x:Key="NeutralBrush" Color="#A6B2C4" />
+    <SolidColorBrush x:Key="NeutralSubtleBrush" Color="#262E3A" />
+    <SolidColorBrush x:Key="RepoAheadBrush" Color="#45C7B8" />
+    <SolidColorBrush x:Key="RepoAheadSubtleBrush" Color="#103833" />
+
+    <!-- Aliases used by older code paths. -->
+    <SolidColorBrush x:Key="PositiveBrush" Color="#7BD97B" />
+
+    <!-- System accent shades. App.xaml.cs reseeds these from the OS
+         accent at startup and on UserPreferenceChanged. Defaults below
+         match Windows 11 default blue (#0078D4) at light tint variants. -->
+    <SolidColorBrush x:Key="SystemAccentColorBrush" Color="#5AA6FF" />
+    <SolidColorBrush x:Key="SystemAccentColorLight1Brush" Color="#78B6FF" />
+    <SolidColorBrush x:Key="SystemAccentColorLight2Brush" Color="#9AC8FF" />
+    <SolidColorBrush x:Key="SystemAccentColorDark1Brush" Color="#1A6CC8" />
+    <SolidColorBrush x:Key="SystemAccentColorDark2Brush" Color="#0F4E92" />
+</ResourceDictionary>

@@ -1,0 +1,31 @@
+bin/
+obj/
+.vs/
+.idea/
+*.user
+*.suo
+TestResults/
+.artifacts/
+publish/
+
+# Developer Control Tower user and machine state
+.controltower/
+portfolio.yml
+portfolio-projects/
+profiles.yml
+settings.yml
+settings.local.yml
+active-profile.txt
+controltower.settings.yml
+
+# Local agent and orchestration state
+.copilot/
+.squad/
+.squad-workstream
+
+# Credentials, certificates, and signing material
+*.pfx
+*.p12
+*.snk
+*.key
+*.pem

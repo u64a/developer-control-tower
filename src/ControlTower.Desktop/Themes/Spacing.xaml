@@ -1,0 +1,22 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:sys="clr-namespace:System;assembly=mscorlib">
+
+    <!-- Radius scale: control = 4 (buttons, chips, list items),
+         surface = 8 (cards, dialogs, status footer). -->
+    <sys:Double x:Key="CornerRadiusControlValue">4</sys:Double>
+    <sys:Double x:Key="CornerRadiusSurfaceValue">8</sys:Double>
+    <CornerRadius x:Key="CornerRadiusControl">4</CornerRadius>
+    <CornerRadius x:Key="CornerRadiusSurface">8</CornerRadius>
+
+    <!-- 8-pt spacing tokens. Margins/Paddings across windows should
+         pick from this set rather than free-form magic numbers. -->
+    <Thickness x:Key="SpacingXs">4</Thickness>
+    <Thickness x:Key="SpacingS">8</Thickness>
+    <Thickness x:Key="SpacingM">12</Thickness>
+    <Thickness x:Key="SpacingL">16</Thickness>
+    <Thickness x:Key="SpacingXl">24</Thickness>
+
+    <sys:Double x:Key="LabelColumnWidth">140</sys:Double>
+    <GridLength x:Key="LabelColumn">140</GridLength>
+</ResourceDictionary>

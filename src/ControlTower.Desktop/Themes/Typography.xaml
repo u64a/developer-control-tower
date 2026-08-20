@@ -1,0 +1,76 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!-- Glyph + text font chains. Segoe Fluent Icons ships with Win11;
+         Segoe MDL2 Assets is the Win10 fallback. Both share enough code
+         points that the visible glyph survives on Win10 too. -->
+    <FontFamily x:Key="SymbolIconFont">Segoe Fluent Icons, Segoe MDL2 Assets</FontFamily>
+    <FontFamily x:Key="AppFontFamily">Segoe UI Variable Text, Segoe UI Variable, Segoe UI</FontFamily>
+    <FontFamily x:Key="AppFontFamilyDisplay">Segoe UI Variable Display, Segoe UI Variable, Segoe UI</FontFamily>
+    <FontFamily x:Key="AppFontFamilyCaption">Segoe UI Variable Small, Segoe UI Variable, Segoe UI</FontFamily>
+
+    <!-- Monospaced chain for the command-console look: labels, chips, column
+         headers, paths, and sync/tree readouts. Cascadia Mono ships with
+         Win11/VS/VS Code; Consolas is the guaranteed Windows fallback. -->
+    <FontFamily x:Key="MonoFontFamily">Cascadia Mono, Consolas</FontFamily>
+
+    <!-- Compact mono label used for eyebrows, chips, and column headers. -->
+    <Style x:Key="MonoLabelStyle" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{StaticResource MonoFontFamily}" />
+        <Setter Property="FontSize" Value="10.5" />
+        <Setter Property="Foreground" Value="{DynamicResource SecondaryTextBrush}" />
+    </Style>
+
+    <!-- Compact, uppercase brand title for the dense console header. -->
+    <Style x:Key="BrandTitleStyle" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{StaticResource AppFontFamilyDisplay}" />
+        <Setter Property="FontSize" Value="15" />
+        <Setter Property="FontWeight" Value="Bold" />
+        <Setter Property="Foreground" Value="{DynamicResource PrimaryTextBrush}" />
+    </Style>
+
+    <!-- Fluent type ramp. Sizes match the WinUI 3 reference; weights
+         use SemiBold at Subtitle and up. -->
+    <Style x:Key="CaptionTextStyle" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{StaticResource AppFontFamilyCaption}" />
+        <Setter Property="FontSize" Value="12" />
+        <Setter Property="Foreground" Value="{DynamicResource SecondaryTextBrush}" />
+    </Style>
+
+    <Style x:Key="BodyTextStyle" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{StaticResource AppFontFamily}" />
+        <Setter Property="FontSize" Value="14" />
+        <Setter Property="Foreground" Value="{DynamicResource PrimaryTextBrush}" />
+    </Style>
+
+    <Style x:Key="BodyStrongTextStyle" TargetType="TextBlock" BasedOn="{StaticResource BodyTextStyle}">
+        <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+
+    <Style x:Key="SectionTitleStyle" TargetType="TextBlock" BasedOn="{StaticResource MonoLabelStyle}" />
+
+    <Style x:Key="SubtitleTextStyle" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{StaticResource AppFontFamily}" />
+        <Setter Property="FontSize" Value="20" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Foreground" Value="{DynamicResource PrimaryTextBrush}" />
+    </Style>
+
+    <Style x:Key="TitleTextStyle" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{StaticResource AppFontFamilyDisplay}" />
+        <Setter Property="FontSize" Value="28" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Foreground" Value="{DynamicResource PrimaryTextBrush}" />
+    </Style>
+
+    <Style x:Key="DisplayTextStyle" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{StaticResource AppFontFamilyDisplay}" />
+        <Setter Property="FontSize" Value="40" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Foreground" Value="{DynamicResource PrimaryTextBrush}" />
+    </Style>
+
+    <!-- Back-compat alias: legacy windows still reference HeroTitleTextStyle.
+         Map it to the new SubtitleTextStyle scale so nothing breaks. -->
+    <Style x:Key="HeroTitleTextStyle" TargetType="TextBlock" BasedOn="{StaticResource SubtitleTextStyle}" />
+</ResourceDictionary>

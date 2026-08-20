@@ -1,0 +1,88 @@
+<Window x:Class="ControlTower.Desktop.PushToManyDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="clr-namespace:ControlTower.Desktop.Controls"
+        Title="Push to Multiple Projects"
+        Icon="Assets/app-icon.png"
+        Height="600"
+        Width="720"
+        MinHeight="480"
+        MinWidth="600"
+        WindowStartupLocation="CenterOwner"
+        Style="{StaticResource BaseWindowStyle}"
+        Background="{DynamicResource WindowBackgroundBrush}"
+        Foreground="{DynamicResource PrimaryTextBrush}">
+    <DockPanel>
+    <controls:WindowTitleBar DockPanel.Dock="Top" />
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <StackPanel Grid.Row="0" Margin="0,0,0,12">
+            <TextBlock Text="Push asset to multiple projects"
+                       Style="{StaticResource SubtitleTextStyle}" />
+            <TextBlock x:Name="AssetSubtitleText"
+                       Foreground="{DynamicResource SecondaryTextBrush}"
+                       Margin="0,2,0,0" />
+            <TextBlock Text="Select target projects, then Apply. Each project gets the same conflict-aware push (New only, Modified files are skipped — use single-project Push for finer control)."
+                       Foreground="{DynamicResource SecondaryTextBrush}"
+                       FontSize="12"
+                       TextWrapping="Wrap"
+                       Margin="0,4,0,0" />
+        </StackPanel>
+
+        <Border Grid.Row="1" Style="{StaticResource CardBorderStyle}">
+            <ListBox x:Name="ProjectListBox"
+                     Background="Transparent"
+                     BorderThickness="0">
+                <ListBox.ItemTemplate>
+                    <DataTemplate>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <CheckBox Grid.Column="0"
+                                      IsChecked="{Binding Selected, Mode=TwoWay}"
+                                      IsEnabled="{Binding Enabled}"
+                                      VerticalAlignment="Center" />
+                            <StackPanel Grid.Column="1" Margin="10,0,0,0">
+                                <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" />
+                                <TextBlock Text="{Binding Detail}"
+                                           Foreground="{DynamicResource SecondaryTextBrush}"
+                                           FontSize="12" />
+                            </StackPanel>
+                            <TextBlock Grid.Column="2"
+                                       Text="{Binding ResultStatus}"
+                                       Foreground="{Binding ResultStatusBrush}"
+                                       VerticalAlignment="Center" />
+                        </Grid>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+        </Border>
+
+        <TextBlock Grid.Row="2" x:Name="StatusText"
+                   Margin="0,8,0,0"
+                   TextWrapping="Wrap"
+                   Foreground="{DynamicResource SecondaryTextBrush}" />
+
+        <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
+            <Button Style="{StaticResource RailButtonStyle}" Click="CancelClick" Width="100" x:Name="CancelButton">
+                <TextBlock Text="Close" />
+            </Button>
+            <Button Style="{StaticResource PrimaryButtonStyle}" Click="ApplyClick" Margin="8,0,0,0" Width="180" x:Name="ApplyButton">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock FontFamily="{StaticResource SymbolIconFont}" Text="&#xE898;" Margin="0,0,8,0" />
+                    <TextBlock Text="Apply to selected" />
+                </StackPanel>
+            </Button>
+        </StackPanel>
+    </Grid>
+    </DockPanel>
+</Window>

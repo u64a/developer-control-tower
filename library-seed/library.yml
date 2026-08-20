@@ -1,0 +1,20 @@
+schema_version: '1'
+generated_on: '2026-08-19'
+last_updated: '2026-08-19'
+
+asset_types:
+  'skill':
+    layout: 'folder'
+    default_target: '.github/skills/{asset_id}/'
+    description: 'Self-contained agent skill folder.'
+  'md-file':
+    layout: 'file_collection'
+    default_target: 'docs/'
+    description: 'Markdown files and templates.'
+  'ppt-template':
+    layout: 'file_collection'
+    default_target: 'docs/templates/'
+    description: 'Presentation templates.'
+
+assets: []
+audit: []

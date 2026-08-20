@@ -1,0 +1,53 @@
+name: CodeQL
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  schedule:
+    - cron: "19 3 * * 3"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: Analyze C#
+    if: github.event.repository.visibility == 'public'
+    runs-on: windows-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: read
+      security-events: write
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
+        with:
+          languages: csharp
+          build-mode: manual
+
+      - name: Restore
+        run: dotnet restore DeveloperControlTower.sln --locked-mode --nologo
+
+      - name: Build
+        run: dotnet build DeveloperControlTower.sln -c Release --no-restore --nologo
+
+      - name: Analyze
+        uses: github/codeql-action/analyze@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
+        with:
+          category: /language:csharp

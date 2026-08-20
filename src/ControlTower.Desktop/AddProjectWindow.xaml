@@ -1,0 +1,124 @@
+<Window x:Class="ControlTower.Desktop.AddProjectWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="clr-namespace:ControlTower.Desktop.Controls"
+        Title="Add Project"
+        Icon="Assets/app-icon.png"
+        Height="560"
+        Width="560"
+        MinHeight="520"
+        MinWidth="520"
+        ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner"
+        Style="{StaticResource BaseWindowStyle}"
+        Background="{DynamicResource WindowBackgroundBrush}"
+        Foreground="{DynamicResource PrimaryTextBrush}">
+    <DockPanel>
+    <controls:WindowTitleBar DockPanel.Dock="Top" />
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <StackPanel Margin="0,0,0,12">
+            <TextBlock x:Name="DialogTitleTextBlock"
+                       Text="Add a project"
+                       Style="{StaticResource SubtitleTextStyle}" />
+            <TextBlock x:Name="DialogSubtitleTextBlock"
+                       Text="Pick a store and name. The folder will be created if it doesn't exist, or adopted if it does."
+                        Margin="0,4,0,0"
+                        Foreground="{DynamicResource SecondaryTextBrush}"
+                        TextWrapping="Wrap" />
+        </StackPanel>
+
+        <Border Grid.Row="1" Style="{StaticResource CardBorderStyle}">
+            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <Grid Margin="0,0,4,0">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="140" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+
+                    <TextBlock Grid.Row="0" Grid.Column="0" Margin="0,0,12,10" VerticalAlignment="Center" Text="Display name" />
+                    <TextBox x:Name="DisplayNameTextBox" Grid.Row="0" Grid.Column="1" Margin="0,0,0,10" />
+
+                    <TextBlock Grid.Row="1" Grid.Column="0" Margin="0,0,12,10" VerticalAlignment="Center" Text="Summary" />
+                    <TextBox x:Name="SummaryTextBox" Grid.Row="1" Grid.Column="1" Margin="0,0,0,10" />
+
+                    <TextBlock Grid.Row="2" Grid.Column="0" Margin="0,0,12,10" VerticalAlignment="Center" Text="Store" />
+                    <StackPanel Grid.Row="2" Grid.Column="1" Margin="0,0,0,10">
+                        <ComboBox x:Name="StoreComboBox" SelectionChanged="StoreComboBox_SelectionChanged" />
+                        <TextBlock x:Name="StoreHintText"
+                                   Text="Where the project folder will live."
+                                   Margin="0,4,0,0"
+                                   Foreground="{DynamicResource SecondaryTextBrush}"
+                                   FontSize="12" />
+                    </StackPanel>
+
+                    <TextBlock Grid.Row="3" Grid.Column="0" Margin="0,0,12,10" VerticalAlignment="Center" Text="Folder name" />
+                    <StackPanel Grid.Row="3" Grid.Column="1" Margin="0,0,0,10">
+                        <TextBox x:Name="FolderNameTextBox" />
+                        <TextBlock x:Name="ResolvedPathText"
+                                   Margin="0,4,0,0"
+                                   Foreground="{DynamicResource SecondaryTextBrush}"
+                                   FontSize="12"
+                                   TextWrapping="Wrap" />
+                    </StackPanel>
+
+                    <TextBlock Grid.Row="4" Grid.Column="0" Margin="0,0,12,10" VerticalAlignment="Center" Text="Lifecycle" />
+                    <ComboBox x:Name="LifecycleComboBox" Grid.Row="4" Grid.Column="1" Margin="0,0,0,10" SelectedIndex="0">
+                        <ComboBoxItem Content="active" />
+                        <ComboBoxItem Content="incubating" />
+                        <ComboBoxItem Content="parked" />
+                    </ComboBox>
+
+                    <TextBlock Grid.Row="5" Grid.Column="0" Margin="0,0,12,10" VerticalAlignment="Center" Text="GitHub URL" />
+                    <TextBox x:Name="GitHubUrlTextBox" Grid.Row="5" Grid.Column="1" Margin="0,0,0,10" />
+
+                    <TextBlock Grid.Row="6" Grid.Column="0" Margin="0,0,12,10" VerticalAlignment="Center" Text="ADO URL" />
+                    <TextBox x:Name="AdoUrlTextBox" Grid.Row="6" Grid.Column="1" Margin="0,0,0,10" />
+
+                    <TextBlock Grid.Row="7" Grid.Column="0" Margin="0,0,12,0" VerticalAlignment="Center" Text="Group" />
+                    <StackPanel Grid.Row="7" Grid.Column="1">
+                        <ComboBox x:Name="GroupComboBox" IsEditable="True" />
+                        <TextBlock Text="Optional folder for the projects pane, e.g. Customer Projects. Leave blank for Ungrouped."
+                                   Margin="0,4,0,0"
+                                   Foreground="{DynamicResource SecondaryTextBrush}"
+                                   FontSize="12"
+                                   TextWrapping="Wrap" />
+                    </StackPanel>
+                </Grid>
+            </ScrollViewer>
+        </Border>
+
+        <!-- Status bar for creation feedback -->
+        <TextBlock x:Name="StatusText" Grid.Row="2" Margin="0,8,0,0"
+                   Foreground="{DynamicResource SecondaryTextBrush}"
+                   FontSize="12"
+                   TextWrapping="Wrap" />
+
+        <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,8,0,0">
+            <Button Content="Cancel" Width="90" Click="CancelClick" />
+            <Button Style="{StaticResource PrimaryButtonStyle}" Width="120" Click="SaveClick">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock FontFamily="{StaticResource SymbolIconFont}" Text="&#xE710;" Margin="0,0,8,0" />
+                    <TextBlock x:Name="SaveButtonTextBlock" Text="Add project" />
+                </StackPanel>
+            </Button>
+        </StackPanel>
+    </Grid>
+    </DockPanel>
+</Window>

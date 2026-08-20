@@ -1,0 +1,126 @@
+<Window x:Class="ControlTower.Desktop.UpdateConfirmDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="clr-namespace:ControlTower.Desktop.Controls"
+        Title="Update Developer Control Tower"
+        Icon="Assets/app-icon.png"
+        Height="440"
+        Width="560"
+        MinWidth="480"
+        ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner"
+        Style="{StaticResource BaseWindowStyle}"
+        Background="{DynamicResource WindowBackgroundBrush}"
+        Foreground="{DynamicResource PrimaryTextBrush}">
+    <DockPanel>
+        <controls:WindowTitleBar DockPanel.Dock="Top" />
+        <Grid Margin="20">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <StackPanel Margin="0,0,0,12">
+                <TextBlock Text="Update Developer Control Tower"
+                           Style="{StaticResource SubtitleTextStyle}" />
+                <TextBlock x:Name="SubtitleText"
+                           Margin="0,4,0,0"
+                           Style="{StaticResource CaptionTextStyle}"
+                           TextWrapping="Wrap" />
+            </StackPanel>
+
+            <Border Grid.Row="1"
+                    x:Name="StatusBanner"
+                    Style="{StaticResource CardBorderStyle}"
+                    Padding="12,10"
+                    Margin="0,0,0,12">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock x:Name="StatusGlyph"
+                               FontFamily="{StaticResource SymbolIconFont}"
+                               FontSize="16"
+                               VerticalAlignment="Center"
+                               Margin="0,0,10,0" />
+                    <TextBlock x:Name="StatusText"
+                               VerticalAlignment="Center"
+                               TextWrapping="Wrap"
+                               FontWeight="SemiBold" />
+                </StackPanel>
+            </Border>
+
+            <Border Grid.Row="2"
+                    x:Name="DevLocationBanner"
+                    Style="{StaticResource CardBorderStyle}"
+                    Padding="12,10"
+                    Margin="0,0,0,12"
+                    Visibility="Collapsed">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock FontFamily="{StaticResource SymbolIconFont}"
+                               FontSize="16"
+                               Text="&#xE7BA;"
+                               VerticalAlignment="Top"
+                               Margin="0,2,10,0"
+                               Foreground="{DynamicResource WarningBrush}" />
+                    <TextBlock x:Name="DevLocationText"
+                               VerticalAlignment="Center"
+                               TextWrapping="Wrap"
+                               Foreground="{DynamicResource WarningBrush}" />
+                </StackPanel>
+            </Border>
+
+            <Border Grid.Row="3"
+                    Style="{StaticResource CardBorderStyle}"
+                    Padding="14">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="120" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+
+                    <TextBlock x:Name="SourceLabel" Grid.Row="0" Grid.Column="0" Text="Branch" Style="{StaticResource CaptionTextStyle}" Margin="0,0,12,6" />
+                    <TextBlock Grid.Row="0" Grid.Column="1" x:Name="BranchText" Margin="0,0,0,6" />
+
+                    <TextBlock x:Name="CurrentLabel" Grid.Row="1" Grid.Column="0" Text="Current build" Style="{StaticResource CaptionTextStyle}" Margin="0,0,12,6" />
+                    <TextBlock Grid.Row="1" Grid.Column="1" x:Name="CurrentShaText" FontFamily="Consolas" Margin="0,0,0,6" />
+
+                    <TextBlock x:Name="TargetLabel" Grid.Row="2" Grid.Column="0" Text="Target build" Style="{StaticResource CaptionTextStyle}" Margin="0,0,12,6" />
+                    <TextBlock Grid.Row="2" Grid.Column="1" x:Name="TargetShaText" FontFamily="Consolas" Margin="0,0,0,6" />
+
+                    <TextBlock x:Name="DifferenceLabel" Grid.Row="3" Grid.Column="0" Text="Behind by" Style="{StaticResource CaptionTextStyle}" Margin="0,0,12,6" />
+                    <TextBlock Grid.Row="3" Grid.Column="1" x:Name="BehindText" Margin="0,0,0,6" />
+
+                    <TextBlock x:Name="LocationLabel" Grid.Row="4" Grid.Column="0" Text="Repo" Style="{StaticResource CaptionTextStyle}" Margin="0,0,12,6" />
+                    <TextBlock Grid.Row="4" Grid.Column="1"
+                               x:Name="RepoRootText"
+                               TextTrimming="CharacterEllipsis"
+                               TextWrapping="Wrap"
+                               FontFamily="Consolas"
+                               Margin="0,0,0,6" />
+                </Grid>
+            </Border>
+
+            <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
+                <Button Content="Cancel" Width="100" Click="CancelClick" />
+                <Button x:Name="UpdateButton"
+                        Style="{StaticResource PrimaryButtonStyle}"
+                        Width="140"
+                        IsDefault="True"
+                        Click="UpdateNowClick">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock FontFamily="{StaticResource SymbolIconFont}" Text="&#xE896;" Margin="0,0,8,0" />
+                        <TextBlock Text="Update now" />
+                    </StackPanel>
+                </Button>
+            </StackPanel>
+        </Grid>
+    </DockPanel>
+</Window>

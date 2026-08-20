@@ -1,0 +1,260 @@
+<Window x:Class="ControlTower.Desktop.RestoreProjectsDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="clr-namespace:ControlTower.Desktop.Controls"
+        xmlns:local="clr-namespace:ControlTower.Desktop"
+        xmlns:vm="clr-namespace:ControlTower.Desktop.ViewModels"
+        Title="Restore Projects from Git"
+        Icon="Assets/app-icon.png"
+        Height="640"
+        Width="1180"
+        MinHeight="520"
+        MinWidth="980"
+        WindowStartupLocation="CenterOwner"
+        Style="{StaticResource BaseWindowStyle}"
+        Background="{DynamicResource WindowBackgroundBrush}"
+        Foreground="{DynamicResource PrimaryTextBrush}">
+    <Window.Resources>
+        <local:BrushKeyToBrushConverter x:Key="BrushKeyToBrushConverter" />
+        <BooleanToVisibilityConverter x:Key="BoolToVis" />
+        <local:NegateBooleanConverter x:Key="NegateBool" />
+        <local:BooleanToVisibilityNegatedConverter x:Key="BoolToVisNegated" />
+    </Window.Resources>
+
+    <DockPanel>
+        <controls:WindowTitleBar DockPanel.Dock="Top" />
+        <Grid Margin="16">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <!-- Header -->
+            <StackPanel Margin="0,0,0,12">
+                <TextBlock Text="Restore projects from Git"
+                           Style="{StaticResource SubtitleTextStyle}" />
+                <TextBlock Text="The portfolio knows about these projects but the local folders are missing or incomplete. Pick which ones to re-clone."
+                           Margin="0,4,0,0"
+                           Foreground="{DynamicResource SecondaryTextBrush}"
+                           TextWrapping="Wrap" />
+            </StackPanel>
+
+            <!-- Toolbar -->
+            <Grid Grid.Row="1" Margin="0,0,0,10">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0"
+                           VerticalAlignment="Center"
+                           Text="{Binding SummaryText}"
+                           Foreground="{DynamicResource SecondaryTextBrush}" />
+                <StackPanel Grid.Column="1" Orientation="Horizontal">
+                    <Button x:Name="RescanButton"
+                            Content="Rescan"
+                            Click="RescanClick"
+                            IsEnabled="{Binding CanScan}" />
+                    <Button x:Name="SelectAllButton"
+                            Content="Select all"
+                            Margin="8,0,0,0"
+                            Click="SelectAllClick"
+                            IsEnabled="{Binding CanScan}" />
+                    <Button x:Name="SelectNoneButton"
+                            Content="Select none"
+                            Margin="8,0,0,0"
+                            Click="SelectNoneClick"
+                            IsEnabled="{Binding CanScan}" />
+                </StackPanel>
+            </Grid>
+
+            <!-- Rows -->
+            <Border Grid.Row="2" Style="{StaticResource CardBorderStyle}">
+                <Grid>
+                    <controls:EmptyStatePresenter
+                        Heading="No projects need restoring"
+                        Hint="Either the portfolio is empty or every local-store project's folder is already cloned. Add or rename a folder to test the Restore flow."
+                        Visibility="{Binding HasNoRows, Converter={StaticResource BoolToVis}}" />
+
+                    <DataGrid x:Name="RowsGrid"
+                              ItemsSource="{Binding Rows}"
+                              AutoGenerateColumns="False"
+                              CanUserAddRows="False"
+                              CanUserDeleteRows="False"
+                              CanUserResizeRows="False"
+                              HeadersVisibility="Column"
+                              IsReadOnly="False"
+                              Visibility="{Binding HasNoRows, Converter={StaticResource BoolToVisNegated}}">
+                        <DataGrid.Columns>
+                            <!-- Select -->
+                            <DataGridTemplateColumn Width="40" CanUserSort="False">
+                                <DataGridTemplateColumn.Header>
+                                    <CheckBox x:Name="HeaderSelectAllCheckBox"
+                                              Click="HeaderSelectAllClick"
+                                              ToolTip="Select / clear all selectable rows" />
+                                </DataGridTemplateColumn.Header>
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <CheckBox HorizontalAlignment="Center"
+                                                  IsChecked="{Binding IsSelected, UpdateSourceTrigger=PropertyChanged, Mode=TwoWay}"
+                                                  IsEnabled="{Binding IsSelectable}" />
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+
+                            <!-- Project -->
+                            <DataGridTemplateColumn Header="Project" Width="200" MinWidth="160">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <StackPanel Margin="2,4">
+                                            <TextBlock Text="{Binding ProjectName}" FontWeight="SemiBold" />
+                                            <TextBlock Text="{Binding Slug}"
+                                                       FontSize="11"
+                                                       Foreground="{DynamicResource SecondaryTextBrush}" />
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+
+                            <!-- Path -->
+                            <DataGridTemplateColumn Header="Expected path" Width="*" MinWidth="200">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding ExpectedPath}"
+                                                   ToolTip="{Binding ExpectedPath}"
+                                                   TextTrimming="CharacterEllipsis"
+                                                   VerticalAlignment="Center" />
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+
+                            <!-- State -->
+                            <DataGridTemplateColumn Header="State" Width="130" MinWidth="120">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="2,0">
+                                            <Ellipse Width="8" Height="8"
+                                                     Margin="0,0,8,0"
+                                                     Fill="{Binding StateBrushKey, Converter={StaticResource BrushKeyToBrushConverter}}" />
+                                            <TextBlock Text="{Binding StateLabel}" VerticalAlignment="Center" />
+                                            <TextBlock Text="{Binding PercentDisplay}"
+                                                       Margin="6,0,0,0"
+                                                       Foreground="{DynamicResource SecondaryTextBrush}"
+                                                       VerticalAlignment="Center" />
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+
+                            <!-- Action picker (ConflictNonEmpty) / URL editor (MissingNeedsUrl) / static label otherwise -->
+                            <DataGridTemplateColumn Header="Action" Width="220" MinWidth="180">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <Grid>
+                                            <ComboBox ItemsSource="{Binding ActionOptions}"
+                                                      DisplayMemberPath="Label"
+                                                      SelectedItem="{Binding SelectedActionOption, Mode=TwoWay}"
+                                                      Visibility="{Binding ShowActionPicker, Converter={StaticResource BoolToVis}}" />
+                                            <StackPanel Visibility="{Binding ShowUrlEditor, Converter={StaticResource BoolToVis}}">
+                                                <TextBox Text="{Binding UserProvidedUrl, UpdateSourceTrigger=PropertyChanged, Mode=TwoWay}"
+                                                         ToolTip="Paste the git origin URL — e.g. https://github.com/owner/repo.git"
+                                                         VerticalContentAlignment="Center"
+                                                         Height="26" />
+                                                <TextBlock Text="{Binding UrlValidationMessage}"
+                                                           Foreground="{DynamicResource CriticalBrush}"
+                                                           FontSize="11"
+                                                           TextWrapping="Wrap"
+                                                           Margin="0,2,0,0"
+                                                           Visibility="{Binding HasUrlValidationMessage, Converter={StaticResource BoolToVis}}" />
+                                            </StackPanel>
+                                            <TextBlock Text="{Binding ClassificationLabel}"
+                                                       VerticalAlignment="Center"
+                                                       Margin="2,0"
+                                                       Foreground="{DynamicResource SecondaryTextBrush}">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                        <Style.Triggers>
+                                                            <MultiDataTrigger>
+                                                                <MultiDataTrigger.Conditions>
+                                                                    <Condition Binding="{Binding ShowActionPicker}" Value="False" />
+                                                                    <Condition Binding="{Binding ShowUrlEditor}" Value="False" />
+                                                                </MultiDataTrigger.Conditions>
+                                                                <Setter Property="Visibility" Value="Visible" />
+                                                            </MultiDataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                            </TextBlock>
+                                        </Grid>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+
+                            <!-- Detail / Error -->
+                            <DataGridTemplateColumn Header="Detail" Width="220" MinWidth="180">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <StackPanel Margin="2,4">
+                                            <TextBlock Text="{Binding Detail}"
+                                                       TextWrapping="Wrap"
+                                                       Foreground="{DynamicResource SecondaryTextBrush}" />
+                                            <TextBlock Text="{Binding ErrorMessage}"
+                                                       Foreground="{DynamicResource CriticalBrush}"
+                                                       TextWrapping="Wrap"
+                                                       Margin="0,2,0,0"
+                                                       Visibility="{Binding HasError, Converter={StaticResource BoolToVis}, FallbackValue=Collapsed}" />
+                                            <TextBlock Text="{Binding QuarantinePath}"
+                                                       FontSize="11"
+                                                       Foreground="{DynamicResource SecondaryTextBrush}"
+                                                       TextTrimming="CharacterEllipsis"
+                                                       Margin="0,2,0,0"
+                                                       ToolTip="{Binding QuarantinePath}"
+                                                       Visibility="{Binding HasQuarantinePath, Converter={StaticResource BoolToVis}}" />
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </Grid>
+            </Border>
+
+            <!-- Status -->
+            <TextBlock Grid.Row="3" x:Name="StatusText"
+                       Margin="0,8,0,0"
+                       Foreground="{DynamicResource SecondaryTextBrush}"
+                       FontSize="12"
+                       TextWrapping="Wrap"
+                       Text="{Binding StatusText}" />
+
+            <!-- Footer -->
+            <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
+                <Button Content="Close"
+                        Width="90"
+                        Click="CloseClick"
+                        IsEnabled="{Binding CanClose}" />
+                <Button x:Name="CancelButton"
+                        Content="Cancel"
+                        Width="90"
+                        Margin="8,0,0,0"
+                        Style="{StaticResource DestructiveButtonStyle}"
+                        Click="CancelRestoreClick"
+                        Visibility="{Binding CanCancel, Converter={StaticResource BoolToVis}}" />
+                <Button x:Name="RestoreButton"
+                        Style="{StaticResource PrimaryButtonStyle}"
+                        Width="170"
+                        Margin="8,0,0,0"
+                        Click="RestoreClick"
+                        IsEnabled="{Binding CanRestore}">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock FontFamily="{StaticResource SymbolIconFont}" Text="&#xE896;" Margin="0,0,8,0" />
+                        <TextBlock Text="Restore selected" />
+                    </StackPanel>
+                </Button>
+            </StackPanel>
+        </Grid>
+    </DockPanel>
+</Window>

@@ -1,0 +1,103 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <OutputType>WinExe</OutputType>
+    <UseWPF>true</UseWPF>
+    <StartupObject>ControlTower.Desktop.Program</StartupObject>
+    <RootNamespace>ControlTower.Desktop</RootNamespace>
+    <AssemblyName>ControlTower.Desktop</AssemblyName>
+    <ApplicationIcon>Assets\app.ico</ApplicationIcon>
+    <Version>0.10.0-preview.1</Version>
+    <Product>Developer Control Tower</Product>
+    <PackageId>u64a.DeveloperControlTower</PackageId>
+    <Company>u64a</Company>
+    <Authors>Chris Cunningham;Joel Platek</Authors>
+    <Copyright>Copyright (c) 2026 Chris Cunningham and Joel Platek</Copyright>
+    <RepositoryUrl>https://github.com/u64a/developer-control-tower</RepositoryUrl>
+    <UpdateRepositoryUrl>https://github.com/u64a/developer-control-tower</UpdateRepositoryUrl>
+    <UpdateIncludePrereleases>true</UpdateIncludePrereleases>
+    <!-- Pre-JIT to native at publish time so single-file cold start is fast. -->
+    <PublishReadyToRun>true</PublishReadyToRun>
+    <PublishReadyToRunComposite>true</PublishReadyToRunComposite>
+    <!-- Ordinary restores remain portable. Explicit self-contained release
+         publishes isolate intermediates and lock graphs by RID. -->
+    <UseCurrentRuntimeIdentifier>false</UseCurrentRuntimeIdentifier>
+    <SelfContained Condition="'$(SelfContained)' == ''">false</SelfContained>
+    <AppendRuntimeIdentifierToOutputPath Condition="'$(SelfContained)' == 'true'">true</AppendRuntimeIdentifierToOutputPath>
+    <AppendRuntimeIdentifierToOutputPath Condition="'$(SelfContained)' != 'true'">false</AppendRuntimeIdentifierToOutputPath>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\ControlTower.Core\ControlTower.Core.csproj" />
+    <ProjectReference Include="..\ControlTower.Infrastructure\ControlTower.Infrastructure.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Velopack" />
+  </ItemGroup>
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>UpdateRepositoryUrl</_Parameter1>
+      <_Parameter2>$(UpdateRepositoryUrl)</_Parameter2>
+    </AssemblyAttribute>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>UpdateIncludePrereleases</_Parameter1>
+      <_Parameter2>$(UpdateIncludePrereleases)</_Parameter2>
+    </AssemblyAttribute>
+  </ItemGroup>
+  <ItemGroup>
+    <Resource Include="Assets\app-icon.png" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="..\..\LICENSE"
+             Link="LICENSE"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\..\THIRD_PARTY_NOTICES.md"
+             Link="THIRD_PARTY_NOTICES.md"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\..\licenses\dotnet-runtime-8.0.30\LICENSE.TXT"
+             Link="licenses\dotnet-runtime-8.0.30\LICENSE.TXT"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\..\licenses\dotnet-runtime-8.0.30\THIRD-PARTY-NOTICES.TXT"
+             Link="licenses\dotnet-runtime-8.0.30\THIRD-PARTY-NOTICES.TXT"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <!-- Ship only the clean starter seed. At runtime it is copied once into the
+       user-writable config root; the replaceable app directory stays read-only. -->
+  <Target Name="CopyStarterLibraryOnBuild" AfterTargets="Build">
+    <ItemGroup>
+      <_StarterLibraryFiles Include="$(MSBuildThisFileDirectory)..\..\library-seed\**\*.*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_StarterLibraryFiles)"
+          DestinationFiles="@(_StarterLibraryFiles->'$(OutDir)library-seed\%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+  </Target>
+
+  <Target Name="CopyStarterLibraryOnPublish" AfterTargets="Publish">
+    <ItemGroup>
+      <_StarterLibraryFilesPub Include="$(MSBuildThisFileDirectory)..\..\library-seed\**\*.*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_StarterLibraryFilesPub)"
+          DestinationFiles="@(_StarterLibraryFilesPub->'$(PublishDir)library-seed\%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+  </Target>
+
+  <!-- Stamp short git SHA into AssemblyInformationalVersion: e.g. 0.7.0+abc1234 -->
+  <Target Name="StampGitSha"
+          BeforeTargets="GetAssemblyVersion;GetAssemblyAttributes"
+          Condition="Exists('$(MSBuildThisFileDirectory)..\..\.git')">
+    <Exec Command="git rev-parse --short HEAD"
+          ConsoleToMSBuild="true"
+          IgnoreExitCode="true"
+          ContinueOnError="true">
+      <Output TaskParameter="ConsoleOutput" PropertyName="GitShortSha" />
+      <Output TaskParameter="ExitCode" PropertyName="GitShaExitCode" />
+    </Exec>
+    <PropertyGroup Condition="'$(GitShaExitCode)' == '0' AND '$(GitShortSha)' != ''">
+      <InformationalVersion>$(Version)+$(GitShortSha)</InformationalVersion>
+    </PropertyGroup>
+  </Target>
+</Project>
