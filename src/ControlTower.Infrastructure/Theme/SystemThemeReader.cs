@@ -9,7 +9,7 @@ namespace ControlTower.Infrastructure.Theme
     /// <summary>
     /// Tiny abstraction over a registry DWORD read so the parsing rule in
     /// <see cref="SystemThemeReader"/> can be unit-tested without touching
-    /// the actual Windows registry (Infrastructure targets net8.0 cross-OS).
+    /// the actual Windows registry (Infrastructure targets net10.0 cross-OS).
     /// </summary>
     public interface IRegistryDword
     {

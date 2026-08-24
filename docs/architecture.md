@@ -1,6 +1,6 @@
 # Architecture
 
-Developer Control Tower is a .NET 8 WPF application with four projects:
+Developer Control Tower is a .NET 10 WPF application with four projects:
 
 | Project | Responsibility |
 |---|---|

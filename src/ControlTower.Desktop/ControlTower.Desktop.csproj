@@ -1,13 +1,13 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net8.0-windows</TargetFramework>
+    <TargetFramework>net10.0-windows</TargetFramework>
     <OutputType>WinExe</OutputType>
     <UseWPF>true</UseWPF>
     <StartupObject>ControlTower.Desktop.Program</StartupObject>
     <RootNamespace>ControlTower.Desktop</RootNamespace>
     <AssemblyName>ControlTower.Desktop</AssemblyName>
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
-    <Version>0.11.0-preview.1</Version>
+    <Version>0.12.0-preview.1</Version>
     <Product>Developer Control Tower</Product>
     <PackageId>u64a.DeveloperControlTower</PackageId>
     <Company>u64a</Company>
@@ -61,12 +61,12 @@
              Link="THIRD_PARTY_NOTICES.md"
              CopyToOutputDirectory="PreserveNewest"
              CopyToPublishDirectory="PreserveNewest" />
-    <Content Include="..\..\licenses\dotnet-runtime-8.0.30\LICENSE.TXT"
-             Link="licenses\dotnet-runtime-8.0.30\LICENSE.TXT"
+    <Content Include="..\..\licenses\dotnet-runtime-10.0.11\LICENSE.TXT"
+             Link="licenses\dotnet-runtime-10.0.11\LICENSE.TXT"
              CopyToOutputDirectory="PreserveNewest"
              CopyToPublishDirectory="PreserveNewest" />
-    <Content Include="..\..\licenses\dotnet-runtime-8.0.30\THIRD-PARTY-NOTICES.TXT"
-             Link="licenses\dotnet-runtime-8.0.30\THIRD-PARTY-NOTICES.TXT"
+    <Content Include="..\..\licenses\dotnet-runtime-10.0.11\THIRD-PARTY-NOTICES.TXT"
+             Link="licenses\dotnet-runtime-10.0.11\THIRD-PARTY-NOTICES.TXT"
              CopyToOutputDirectory="PreserveNewest"
              CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>

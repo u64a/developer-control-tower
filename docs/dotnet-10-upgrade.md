@@ -36,6 +36,15 @@ runtime inside our own attested SBOM undermines that apparatus.
 | 2 | The retarget to .NET 10 | .NET 10 release | **10 Oct 2026** |
 | 3 | Dependency hygiene | patch release | after Phase 2, no deadline |
 
+**Status.** Phase 0 shipped as `v0.11.0-preview.1` and Phase 1 is **satisfied**:
+the install reports `0.11.0-preview.1+5f5bc34`, so it carries the
+framework-agnostic updater and can cross the TFM boundary. Phase 2 is therefore
+unblocked and ships as `0.12.0-preview.1`. Phase 3 remains deferred.
+
+Re-check the gate before tagging if any further install exists — adoption means
+each install *reporting* the bridge version, not the release merely being
+published.
+
 Dates leave roughly four weeks of slack before the 10 November deadline. That
 slack is deliberate: if Phase 2 validation surfaces a problem in composite
 ReadyToRun on `win-arm64` or in the test runner, the fix window should be weeks,
@@ -47,7 +56,7 @@ Both release phases go out through `.github/workflows/release.yml`, which fires
 on a `v*` tag and **fails the build unless the tag matches `<Version>` in
 `ControlTower.Desktop.csproj`**. Bump the csproj version in the same commit as
 the tag. A version containing `-` is published as a prerelease, which is the
-current convention (`0.10.0-preview.1`).
+current convention (`0.11.0-preview.1` carries the Phase 0 bridge).
 
 ### Critical path
 
@@ -170,9 +179,22 @@ That is unavoidable and should be called out in the release notes.
 
 ## Phase 1 — adoption gate
 
-No code. Confirm every install is running the Phase 0 build before Phase 2 is
-merged. Check the version each install reports; do not infer adoption from the
-fact that a release was published.
+**Satisfied on 28 Aug 2026.** No code.
+
+Confirm every install is running the Phase 0 build before Phase 2 is merged.
+Check the version each install reports; do not infer adoption from the fact that
+a release was published.
+
+Evidence for the current install:
+
+| Check | Value |
+|---|---|
+| `current\ControlTower.Desktop.exe` `ProductVersion` | `0.11.0-preview.1+5f5bc34` |
+| Commit embedded in that version | `5f5bc34`, the Phase 0 bridge merge |
+| `runtimeconfig.json` | self-contained, `Microsoft.NETCore.App` `8.0.30` |
+
+The embedded commit is what matters: it proves the binary carries the
+framework-agnostic updater rather than merely sharing a version string.
 
 If an install cannot be upgraded in time, it needs a manual re-install after
 Phase 2 rather than an in-place update.
@@ -255,6 +277,36 @@ Then update `THIRD_PARTY_NOTICES.md:10-11` and the provenance link at line 37
 
 `CONTRIBUTING.md` needs no change — it defers to `global.json` by name.
 
+### Discovered during implementation: ReadyToRun packs are a restore-time input
+
+The retarget passed restore, build, all 785 tests, the boundary check and the
+NuGet audit, then failed the release build:
+
+```
+error NETSDK1094: Unable to optimize assemblies for performance: a valid
+runtime package was not found. ... make sure to restore packages with the
+PublishReadyToRun property set to true.
+```
+
+`Build-ReleasePackages.ps1` restores each RID with `--locked-mode` and then
+publishes `--self-contained true --no-restore`. The crossgen2 pack that
+ReadyToRun needs is acquired during **restore**, and the restore was not being
+told that a ReadyToRun self-contained publish was coming.
+
+Measured with a deliberately cold cache (the 10.0.11 crossgen2 pack deleted
+from `~/.nuget/packages` first):
+
+| RID restore | crossgen2 10.0.11 fetched | `publish --no-restore` |
+|---|---|---|
+| as before | no | fails `NETSDK1094` |
+| `-p:PublishReadyToRun=true -p:SelfContained=true` | yes | succeeds |
+
+This was masked on .NET 8 purely because the 8.0.30 crossgen2 pack was already
+sitting in the local package cache from earlier builds — a cold machine would
+have hit the same wall. The RID restore now passes both properties, keeping it
+in step with the publish that follows. This also resolves the restore/publish
+`SelfContained` mismatch previously listed under risks.
+
 ### Sequencing
 
 Order matters; two steps will fail if run early.
@@ -263,7 +315,9 @@ Order matters; two steps will fail if run early.
    **runtimes** (`10.0.11`) but **no** .NET 10 SDK.
 2. Retarget the four projects and add the two central pins.
 3. Regenerate the four base lock files.
-4. Regenerate the six RID lock files with `-p:SelfContained=true` (see risks).
+4. Regenerate the six RID lock files with
+   `-p:PublishReadyToRun=true -p:SelfContained=true`, matching the release
+   script's RID restore.
 5. Assert the new lock keys really say `net10.0` / `net10.0-windows7.0`.
    `Assert-ReleaseMetadata` only checks that a RID target *ends with* the
    expected RID; it would happily pass a stale `net8.0` graph.
@@ -305,11 +359,11 @@ compatible. .NET 10 keeps VSTest as the `dotnet test` default and this repo does
 not opt into Microsoft.Testing.Platform. **Do not** opt in during this work —
 xUnit v2 would then need its own migration.
 
-Residual .NET 8-versioned packages after the upgrade are test-only and not
-redistributed: `System.Reflection.Metadata 8.0.0` and
-`System.Collections.Immutable 8.0.0`, both from the test SDK. If the acceptance
-criterion is "no 8.x Microsoft package anywhere" rather than "nothing shipped is
-out of support", these cannot be deferred.
+Residual .NET 8-versioned packages were expected to survive in the test graph
+(`System.Reflection.Metadata 8.0.0`, `System.Collections.Immutable 8.0.0`, both
+from the test SDK). They did not: after the retarget no package in any of the
+ten lock files resolves to an 8.x version. Verified by searching every
+`packages*.lock.json` for `"resolved": "8.` — no matches.
 
 ## Risks
 
@@ -319,11 +373,12 @@ obsolete `X509Certificate2` constructors, `RNGCryptoServiceProvider`,
 runtime-location APIs in use are `AppContext.BaseDirectory` and
 `Process.GetCurrentProcess().MainModule`, both stable.
 
-**Expect a cosmetic `runtimeconfig.json` diff.** On `net8.0` the WPF SDK injects
-`System.Runtime.Serialization.EnableUnsafeBinaryFormatterSerialization: true`
-into the generated runtimeconfig. `BinaryFormatter` was removed from the runtime
-in .NET 9, so that switch disappears under `net10.0`. Nothing in this repository
-uses it — treat its absence as expected, not a regression.
+**Expect a `runtimeconfig.json` diff.** On `net8.0` the WPF SDK emitted
+`System.Runtime.Serialization.EnableUnsafeBinaryFormatterSerialization: true`.
+`BinaryFormatter` was removed from the runtime in .NET 9, so on `net10.0` that
+switch is emitted as `false` and `CSWINRT_USE_WINDOWS_UI_XAML_PROJECTIONS`
+appears alongside it. Nothing in this repository uses `BinaryFormatter` — treat
+the change as expected, not a regression.
 
 **WPF theming is unaffected.** `App.xaml:8-13` merges only repository-owned
 dictionaries (`Colors`, `Spacing`, `Typography`, `Components`), there is no
@@ -338,13 +393,13 @@ SDK 10 pin. `Velopack 1.2.0` has a `net10.0` lib target. No version change.
 **Composite ReadyToRun stays supported**, including x64-hosted
 cross-compilation to `win-arm64`. Nothing was removed in .NET 10.
 
-**RID restore/publish property mismatch (pre-existing).**
-`Build-ReleasePackages.ps1` restores with a RID but leaves `SelfContained`
-false, then publishes with `--self-contained true --no-restore`. The csproj
-gates `AppendRuntimeIdentifierToOutputPath` and composite R2R on that property,
-so restore and publish evaluate different inputs. It works today, but this is
-the documented cause of `NETSDK1112`. Pass `-p:SelfContained=true` to the RID
-restore in both the release script and lock regeneration.
+**RID restore/publish property mismatch — now fixed.**
+`Build-ReleasePackages.ps1` used to restore with a RID but leave `SelfContained`
+false, then publish with `--self-contained true --no-restore`, so restore and
+publish evaluated different inputs. On .NET 10 this stopped being theoretical
+and produced `NETSDK1094`. The RID restore now passes
+`-p:PublishReadyToRun=true -p:SelfContained=true`; see the Phase 2 discovery
+above.
 
 **Local NuGet configuration.** `nuget.org` is disabled and all restore flows
 through `https://packagefeedproxy.microsoft.io/nuget/v3/index.json`. That proxy
