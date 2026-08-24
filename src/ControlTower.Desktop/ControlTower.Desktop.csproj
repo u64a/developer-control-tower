@@ -7,7 +7,7 @@
     <RootNamespace>ControlTower.Desktop</RootNamespace>
     <AssemblyName>ControlTower.Desktop</AssemblyName>
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
-    <Version>0.10.0-preview.1</Version>
+    <Version>0.11.0-preview.1</Version>
     <Product>Developer Control Tower</Product>
     <PackageId>u64a.DeveloperControlTower</PackageId>
     <Company>u64a</Company>
