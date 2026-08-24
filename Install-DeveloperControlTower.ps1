@@ -188,6 +188,58 @@ function Get-SentinelRepoRoot([string]$sentinelPath) {
     throw "Legacy install sentinel does not contain a repo root: $sentinelPath"
 }
 
+function Assert-RequiredSdk([string]$repoRoot) {
+    # global.json pins an exact SDK with rollForward disabled, so "some
+    # dotnet on PATH" is not a sufficient prerequisite check. Fail here with
+    # the version to install rather than deep inside an MSBuild error.
+    if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
+        throw "The .NET SDK ('dotnet') was not found on PATH. See global.json for the required version."
+    }
+
+    $globalJsonPath = Join-Path $repoRoot 'global.json'
+    if (-not (Test-Path -LiteralPath $globalJsonPath -PathType Leaf)) {
+        return
+    }
+
+    try {
+        $pin = Get-Content -LiteralPath $globalJsonPath -Raw | ConvertFrom-Json
+    }
+    catch {
+        Write-Warning "Could not parse global.json; skipping SDK version check."
+        return
+    }
+
+    $required = [string]$pin.sdk.version
+    if ([string]::IsNullOrWhiteSpace($required)) {
+        return
+    }
+    $rollForward = [string]$pin.sdk.rollForward
+
+    $installed = @(
+        & dotnet --list-sdks |
+            ForEach-Object { ($_ -split ' ')[0] } |
+            Where-Object { $_ }
+    )
+    if ($installed.Count -eq 0) {
+        throw "No .NET SDKs are installed. Install .NET SDK $required."
+    }
+
+    if ($rollForward -eq 'disable') {
+        if ($installed -notcontains $required) {
+            throw ("global.json pins .NET SDK $required with rollForward disabled, " +
+                "but that exact version is not installed. Installed: $($installed -join ', ').")
+        }
+        return
+    }
+
+    $requiredMajor = [int]($required -split '\.')[0]
+    $hasMajor = @($installed | Where-Object { [int]($_ -split '\.')[0] -ge $requiredMajor })
+    if ($hasMajor.Count -eq 0) {
+        throw ("global.json requires .NET SDK $required or newer, " +
+            "but only these are installed: $($installed -join ', ').")
+    }
+}
+
 function Assert-NoReparsePointAncestors([string]$path) {
     $current = $path
     while (-not [string]::IsNullOrWhiteSpace($current)) {
@@ -316,8 +368,11 @@ if ($ValidateInstallDirOnly) {
 
 # --- Step 1: dotnet publish into staging (skipped if we're the elevated child). ---
 if (-not $StagingPath) {
-    if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
-        Write-Error "The .NET SDK ('dotnet') was not found on PATH. Install .NET 8 SDK or later."
+    try {
+        Assert-RequiredSdk $RepoRoot
+    }
+    catch {
+        Write-Error $_.Exception.Message
         exit 1
     }
 
@@ -337,10 +392,19 @@ if (-not $StagingPath) {
         exit 1
     }
     Write-Host "[1/4] Publishing Release build to staging: $StagingPath" -ForegroundColor Cyan
+    # Explicit locked restore so the publish below can skip its implicit one,
+    # which would otherwise rewrite the committed lock files on a mismatch.
+    & dotnet restore $ProjectPath --locked-mode --nologo
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "dotnet restore failed (exit $LASTEXITCODE). The committed lock files do not match what this machine resolves."
+        exit $LASTEXITCODE
+    }
+    # No -f flag: the Desktop project is single-target, so the SDK picks the
+    # moniker from the csproj and this script survives a framework change.
     & dotnet publish $ProjectPath `
         -c Release `
-        -f net8.0-windows `
         --no-self-contained `
+        --no-restore `
         --nologo `
         -o $StagingPath
     if ($LASTEXITCODE -ne 0) {

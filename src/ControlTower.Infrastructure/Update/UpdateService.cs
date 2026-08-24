@@ -35,11 +35,6 @@ namespace ControlTower.Infrastructure.Update
         private const string DesktopRelativeProjectPath =
             @"src\ControlTower.Desktop\ControlTower.Desktop.csproj";
 
-        // Target framework moniker the Desktop project ships with. Kept as
-        // a constant so the update / install scripts stay in lockstep with
-        // the csproj without anyone having to grep two repos.
-        private const string DesktopTargetFramework = "net8.0-windows";
-
         // Sentinel file dropped next to the installed .exe by the publish /
         // install script. Records the absolute path to the source git
         // clone so the updater works regardless of where the .exe was
@@ -840,6 +835,9 @@ namespace ControlTower.Infrastructure.Update
             var teeFile = ValidateCommandPath(
                 Path.Combine(scriptFolder, "tee-" + Guid.NewGuid().ToString("N").Substring(0, 12) + ".txt"),
                 "teeFile");
+            var pinFile = ValidateCommandPath(
+                Path.Combine(scriptFolder, "pin-" + Guid.NewGuid().ToString("N").Substring(0, 12) + ".json"),
+                "pinFile");
 
             var sb = new StringBuilder();
             sb.AppendLine("@echo off");
@@ -857,6 +855,7 @@ namespace ControlTower.Infrastructure.Update
             sb.AppendLine("if not defined TODAY set \"TODAY=unknown\"");
             sb.AppendLine("set \"LOG=%LOG_DIR%\\app-%TODAY%.log\"");
             sb.AppendLine("set \"TEEFILE=" + teeFile + "\"");
+            sb.AppendLine("set \"GJSON=" + pinFile + "\"");
             sb.AppendLine("set \"STEP=startup\"");
             sb.AppendLine("set \"RC=0\"");
             sb.AppendLine("set \"REPO=" + repoRoot + "\"");
@@ -998,6 +997,57 @@ namespace ControlTower.Infrastructure.Update
             sb.AppendLine(")");
             sb.AppendLine();
 
+            // --- SDK preflight -------------------------------------------------
+            // Runs BEFORE the fast-forward, and reads the incoming commit's
+            // pin via `git show FETCH_HEAD:...` rather than the working tree.
+            //
+            // This is the guard that makes a target-framework change safe. If
+            // the SDK an incoming commit needs is missing, the merge must not
+            // happen at all: a fast-forwarded checkout that cannot be built
+            // leaves the source ahead of the installed binary with no recovery
+            // except a manual reinstall.
+            //
+            // Failing to *determine* the requirement (no global.json, or JSON
+            // we cannot parse) is not treated as failure - we only block on a
+            // requirement we positively established and could not satisfy.
+            sb.AppendLine("set \"STEP=sdk preflight\"");
+            AppendLoggedLine(sb, "=== Checking the .NET SDK required by the incoming commit ===");
+            sb.AppendLine("git show FETCH_HEAD:global.json > \"%GJSON%\" 2>nul");
+            sb.AppendLine("if errorlevel 1 (");
+            AppendLoggedLine(sb, "No global.json in the incoming commit - skipping SDK preflight.", indent: "    ");
+            sb.AppendLine("    goto sdk_preflight_ok");
+            sb.AppendLine(")");
+            sb.AppendLine(
+                "powershell -NoProfile -Command " +
+                "\"$ErrorActionPreference='Stop'; " +
+                "try { $g=ConvertFrom-Json ([IO.File]::ReadAllText($env:GJSON)) } catch { exit 3 }; " +
+                "$v=[string]$g.sdk.version; if (-not $v) { exit 0 }; " +
+                "$roll=[string]$g.sdk.rollForward; " +
+                "$sdks=@(); " +
+                "try { foreach ($line in @(dotnet --list-sdks)) { $sdks+=($line -split ' ')[0] } } " +
+                "catch { exit 4 }; " +
+                "if ($sdks.Count -eq 0) { exit 4 }; " +
+                "if ($roll -eq 'disable') { if ($sdks -contains $v) { exit 0 }; exit 5 }; " +
+                "$want=[int](($v -split '\\.')[0]); " +
+                "foreach ($s in $sdks) { if ([int](($s -split '\\.')[0]) -ge $want) { exit 0 } }; " +
+                "exit 5\" >nul 2>&1");
+            sb.AppendLine("set \"PRERC=%ERRORLEVEL%\"");
+            sb.AppendLine("if \"%PRERC%\"==\"0\" goto sdk_preflight_ok");
+            sb.AppendLine("if \"%PRERC%\"==\"3\" (");
+            AppendLoggedLine(sb, "Could not read the SDK pin - skipping SDK preflight.", indent: "    ");
+            sb.AppendLine("    goto sdk_preflight_ok");
+            sb.AppendLine(")");
+            AppendLoggedLine(sb, "*** The .NET SDK required by the update is not installed. ***");
+            AppendLoggedLine(sb, "*** Nothing has been changed - your install still works. ***");
+            AppendLoggedLine(sb, "*** Install the SDK named in the global.json below, then update again. ***");
+            AppendLoggedLine(sb, "--- global.json from the incoming commit ---");
+            sb.AppendLine("type \"%GJSON%\"");
+            sb.AppendLine("type \"%GJSON%\" >> \"%LOG%\"");
+            sb.AppendLine("set \"RC=12\"");
+            sb.AppendLine("goto fail");
+            sb.AppendLine(":sdk_preflight_ok");
+            sb.AppendLine();
+
             // --- fast-forward to the exact commit fetched above ---
             sb.AppendLine("set \"STEP=git fast-forward\"");
             AppendTeedCommand(sb, "git merge --ff-only FETCH_HEAD", "git merge --ff-only FETCH_HEAD");
@@ -1010,14 +1060,35 @@ namespace ControlTower.Infrastructure.Update
             sb.AppendLine(")");
             sb.AppendLine();
 
+            // --- dotnet restore (locked) ---
+            // Explicit locked restore, so publish below can run --no-restore.
+            // Without this the implicit restore inside `dotnet publish` would
+            // silently REWRITE the committed packages.lock.json when the graph
+            // disagrees, dirtying the working tree and blocking the next
+            // update at the clean-tree gate.
+            sb.AppendLine("set \"STEP=dotnet restore\"");
+            AppendTeedCommand(sb,
+                "dotnet restore " + csprojPath + " --locked-mode",
+                "dotnet restore \"%CSPROJ%\" --locked-mode --nologo");
+            sb.AppendLine("if not \"%RC%\"==\"0\" (");
+            AppendLoggedLine(sb, "*** Restore failed. Source was updated but the OLD build is still installed. ***", indent: "    ");
+            AppendLoggedLine(sb, "*** The committed lock files do not match what this machine resolves. ***", indent: "    ");
+            sb.AppendLine("    set \"RC=7\"");
+            sb.AppendLine("    goto fail");
+            sb.AppendLine(")");
+            sb.AppendLine();
+
             // --- dotnet publish (Release) into staging ---
+            // No -f flag: the Desktop project is single-target, so the SDK
+            // selects the moniker from the csproj. Pinning it here would make
+            // every install unable to cross a target-framework change.
             sb.AppendLine("set \"STEP=dotnet publish\"");
             sb.AppendLine("if exist \"%STAGE%\" rmdir /s /q \"%STAGE%\" >nul 2>&1");
             sb.AppendLine("mkdir \"%STAGE%\" >nul 2>&1");
             AppendTeedCommand(sb,
-                "dotnet publish " + csprojPath + " -c Release -f " + DesktopTargetFramework + " --no-self-contained -o " + stagingDir,
-                "dotnet publish \"%CSPROJ%\" -c Release -f " + DesktopTargetFramework +
-                    " --no-self-contained --nologo -o \"%STAGE%\"");
+                "dotnet publish " + csprojPath + " -c Release --no-self-contained -o " + stagingDir,
+                "dotnet publish \"%CSPROJ%\" -c Release" +
+                    " --no-self-contained --no-restore --nologo -o \"%STAGE%\"");
             sb.AppendLine("if not \"%RC%\"==\"0\" (");
             AppendLoggedLine(sb, "*** Publish failed. Source was updated but the OLD build is still installed. ***", indent: "    ");
             AppendLoggedLine(sb, "*** Fix and rerun the update from the app, or run Install-DeveloperControlTower.ps1. ***", indent: "    ");
@@ -1141,6 +1212,7 @@ namespace ControlTower.Infrastructure.Update
                 "========== Update script end: SUCCESS (relaunching " + exePath + ") ==========");
             AppendLoggedLine(sb, string.Empty);
             sb.AppendLine("if exist \"%TEEFILE%\" del \"%TEEFILE%\" >nul 2>&1");
+            sb.AppendLine("if exist \"%GJSON%\" del \"%GJSON%\" >nul 2>&1");
             sb.AppendLine("timeout /t 1 /nobreak >nul");
             sb.AppendLine("start \"\" \"%EXE%\"");
             sb.AppendLine("endlocal & exit /b 0");
@@ -1153,6 +1225,7 @@ namespace ControlTower.Infrastructure.Update
                 "========== Update script end: FAILURE (step=%STEP% exit=%RC%) ==========");
             AppendLoggedLine(sb, string.Empty);
             sb.AppendLine("if exist \"%TEEFILE%\" del \"%TEEFILE%\" >nul 2>&1");
+            sb.AppendLine("if exist \"%GJSON%\" del \"%GJSON%\" >nul 2>&1");
             sb.AppendLine("pause");
             sb.AppendLine("endlocal & exit /b %RC%");
 

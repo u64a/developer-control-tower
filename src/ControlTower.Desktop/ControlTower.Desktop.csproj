@@ -16,9 +16,15 @@
     <RepositoryUrl>https://github.com/u64a/developer-control-tower</RepositoryUrl>
     <UpdateRepositoryUrl>https://github.com/u64a/developer-control-tower</UpdateRepositoryUrl>
     <UpdateIncludePrereleases>true</UpdateIncludePrereleases>
-    <!-- Pre-JIT to native at publish time so single-file cold start is fast. -->
-    <PublishReadyToRun>true</PublishReadyToRun>
-    <PublishReadyToRunComposite>true</PublishReadyToRunComposite>
+    <!-- Pre-JIT to native at publish time so single-file cold start is fast.
+         Gated on an explicit RID: ReadyToRun cannot infer one (see
+         UseCurrentRuntimeIdentifier below), so leaving these unconditional
+         makes every RID-less publish fail with NETSDK1191 - which is the
+         exact command the installer and the in-place updater both run. The
+         release path always passes -r, so packaged builds keep composite
+         R2R. -->
+    <PublishReadyToRun Condition="'$(RuntimeIdentifier)' != ''">true</PublishReadyToRun>
+    <PublishReadyToRunComposite Condition="'$(RuntimeIdentifier)' != ''">true</PublishReadyToRunComposite>
     <!-- Ordinary restores remain portable. Explicit self-contained release
          publishes isolate intermediates and lock graphs by RID. -->
     <UseCurrentRuntimeIdentifier>false</UseCurrentRuntimeIdentifier>
