@@ -49,6 +49,31 @@ jobs:
       - name: Test
         run: dotnet test DeveloperControlTower.sln -c Release --no-build --nologo
 
+      # Guards the source-install path, which the release job never exercises:
+      # it publishes with an explicit RID, so a RID-less regression (such as
+      # ReadyToRun failing to infer one) is invisible there while breaking
+      # both Install-DeveloperControlTower.ps1 and the in-place updater.
+      - name: Verify source-install publish path
+        shell: pwsh
+        run: |
+          $project = 'src\ControlTower.Desktop\ControlTower.Desktop.csproj'
+          $stage = Join-Path $env:RUNNER_TEMP 'source-install-check'
+          dotnet restore $project --locked-mode --nologo
+          if ($LASTEXITCODE -ne 0) {
+            throw "Locked restore of the desktop project failed."
+          }
+          dotnet publish $project -c Release --no-self-contained --no-restore --nologo -o $stage
+          if ($LASTEXITCODE -ne 0) {
+            throw "The RID-less publish used by Install-DeveloperControlTower.ps1 and the in-place updater failed."
+          }
+          if (-not (Test-Path -LiteralPath (Join-Path $stage 'ControlTower.Desktop.exe'))) {
+            throw "The source-install publish produced no executable."
+          }
+          $dirty = git status --porcelain
+          if ($dirty) {
+            throw "Restore or publish modified tracked files (lock files must stay unchanged):`n$dirty"
+          }
+
       - name: Audit NuGet vulnerabilities
         shell: pwsh
         run: .\Test-NuGetVulnerabilities.ps1

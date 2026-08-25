@@ -634,9 +634,10 @@ public class UpdateServiceTests : IDisposable
         Assert.Contains("git merge --ff-only FETCH_HEAD > \"%TEEFILE%\" 2>&1", contents);
         Assert.Contains("=== git merge --ff-only FETCH_HEAD exit=%RC% ===", contents);
         // dotnet publish wraps the csproj path in quotes and writes into
-        // a temp staging folder pointed at by %STAGE%.
+        // a temp staging folder pointed at by %STAGE%. It runs --no-restore
+        // because an explicit locked restore precedes it.
         Assert.Contains("dotnet publish \"", contents);
-        Assert.Contains("--no-self-contained --nologo -o \"%STAGE%\" > \"%TEEFILE%\" 2>&1", contents);
+        Assert.Contains("--no-self-contained --no-restore --nologo -o \"%STAGE%\" > \"%TEEFILE%\" 2>&1", contents);
 
         // After every teed command the script captures errorlevel and pipes
         // the captured output to both stdout and the app log. The new
@@ -658,6 +659,115 @@ public class UpdateServiceTests : IDisposable
         var gotoFails = CountOccurrences(contents, "goto fail");
         Assert.True(gotoFails >= 5,
             $"Expected at least 5 goto fail branches; found {gotoFails}.");
+    }
+
+    // ---------- framework-agnostic update contract ----------
+    //
+    // The generated script is written by the CURRENTLY INSTALLED binary but
+    // executes after the checkout has fast-forwarded to the NEW commit. Any
+    // build detail baked into the script by the old binary must therefore
+    // stay valid across the change it is about to pull in.
+
+    [Fact]
+    public async Task LaunchUpdate_ScriptPublishesWithoutPinnedTargetFramework()
+    {
+        var contents = await BuildUpdateScript("no-tfm-pin");
+
+        // A pinned -f moniker is precisely what stops an installed build from
+        // updating across a target-framework change: the old script would ask
+        // for a moniker the new csproj no longer offers, the publish fails,
+        // and the source is left ahead of the still-installed old binary.
+        Assert.DoesNotContain(" -f ", contents);
+        Assert.DoesNotContain("net8.0", contents);
+        Assert.DoesNotContain("net10.0", contents);
+
+        // Restore is explicit and locked so that publish can skip its implicit
+        // restore, which would otherwise rewrite the committed lock files and
+        // dirty the tree for the next update.
+        Assert.Contains("dotnet restore \"%CSPROJ%\" --locked-mode --nologo", contents);
+        Assert.Contains("--no-restore", contents);
+
+        var restore = contents.IndexOf("set \"STEP=dotnet restore\"", StringComparison.Ordinal);
+        var publish = contents.IndexOf("set \"STEP=dotnet publish\"", StringComparison.Ordinal);
+        Assert.True(restore >= 0, "Script must run an explicit restore.");
+        Assert.True(restore < publish, "Restore must precede publish.");
+    }
+
+    [Fact]
+    public async Task LaunchUpdate_ScriptVerifiesRequiredSdkBeforeMerging()
+    {
+        var contents = await BuildUpdateScript("sdk-preflight");
+
+        // The requirement must be read from the INCOMING commit, not the
+        // working tree, which still holds the old pin at this point.
+        Assert.Contains("git show FETCH_HEAD:global.json", contents);
+        Assert.Contains("dotnet --list-sdks", contents);
+
+        var preflight = contents.IndexOf(
+            "set \"STEP=sdk preflight\"",
+            StringComparison.Ordinal);
+        var merge = contents.IndexOf(
+            "git merge --ff-only FETCH_HEAD > \"%TEEFILE%\" 2>&1",
+            StringComparison.Ordinal);
+        var restore = contents.IndexOf(
+            "set \"STEP=dotnet restore\"",
+            StringComparison.Ordinal);
+
+        Assert.True(preflight >= 0, "Script must preflight the required SDK.");
+        Assert.True(merge >= 0, "Script must fast-forward with an explicit merge.");
+        Assert.True(
+            preflight < merge,
+            "The SDK check must run BEFORE the fast-forward. Checking afterwards " +
+            "leaves the checkout ahead of the installed build with no recovery " +
+            "except a manual reinstall.");
+        Assert.True(merge < restore, "The merge must precede restore and publish.");
+
+        // A requirement we established and could not satisfy aborts the run...
+        Assert.Contains("set \"RC=12\"", contents);
+        // ...but an indeterminate result must never block a legitimate update.
+        Assert.Contains("goto sdk_preflight_ok", contents);
+    }
+
+    /// <summary>
+    /// Drives a minimal happy-path update and returns the generated script.
+    /// The executable path is deliberately free of any framework moniker so
+    /// that assertions about monikers in the script body stay meaningful.
+    /// </summary>
+    private async Task<string> BuildUpdateScript(string name)
+    {
+        var repoRoot = MakeValidRepoRoot(name);
+        var tempRoot = Path.Combine(_scratchRoot, name + "-temp");
+        var logRoot = Path.Combine(_scratchRoot, name + "-log");
+        Directory.CreateDirectory(tempRoot);
+        Directory.CreateDirectory(logRoot);
+
+        var git = new FakeGitAdapter();
+        WireLaunchRecheck(git, ahead: "0", behind: "1");
+
+        var shell = new FakeShellLauncher { ReturnedPid = 99 };
+        var service = new UpdateService(
+            git, shell,
+            executablePathProvider: () => Path.Combine(repoRoot, "ControlTower.Desktop.exe"),
+            currentProcessIdProvider: () => 555,
+            tempPathProvider: () => tempRoot,
+            logFolderProvider: () => logRoot,
+            logger: _logger,
+            installDirWritableProbe: _ => true);
+
+        var result = await service.LaunchUpdateAsync(
+            new UpdateCheckResult(
+                Status: UpdateStatus.UpdateAvailable,
+                CurrentSha: "aaaaaaaa", RemoteSha: "bbbbbbbb",
+                Branch: "main", ConfiguredBranch: "main",
+                CommitsBehind: 1, CommitsAhead: 0,
+                RepoRoot: repoRoot,
+                ExecutablePath: Path.Combine(repoRoot, "ControlTower.Desktop.exe"),
+                Message: "x"),
+            CancellationToken.None);
+
+        Assert.True(result.Spawned);
+        Assert.NotNull(shell.LastScriptPath);
+        return File.ReadAllText(shell.LastScriptPath!);
     }
 
     private static int CountOccurrences(string haystack, string needle)
