@@ -1,6 +1,7 @@
 # .NET 10 upgrade
 
-Status: approved, not started. Driver is security support, not features.
+Status: **complete**. Shipped 28 August 2026, ahead of the 10 November deadline.
+Driver was security support, not features.
 
 ## Why
 
@@ -29,26 +30,34 @@ runtime inside our own attested SBOM undermines that apparatus.
 
 ## Roadmap
 
-| Phase | Deliverable | Ships as | Target date |
-|---|---|---|---|
-| 0 | Bridge release — updater becomes framework-agnostic | .NET 8 release | **5 Sep 2026** |
-| 1 | Adoption gate — every install running the bridge build | (no release) | **19 Sep 2026** |
-| 2 | The retarget to .NET 10 | .NET 10 release | **10 Oct 2026** |
-| 3 | Dependency hygiene | patch release | after Phase 2, no deadline |
+| Phase | Deliverable | Ships as | Target date | Outcome |
+|---|---|---|---|---|
+| 0 | Bridge release — updater becomes framework-agnostic | .NET 8 release | 5 Sep 2026 | **Done** — `v0.11.0-preview.1`, 27 Aug |
+| 1 | Adoption gate — every install running the bridge build | (no release) | 19 Sep 2026 | **Done** — verified 28 Aug |
+| 2 | The retarget to .NET 10 | .NET 10 release | 10 Oct 2026 | **Done** — `v0.12.0-preview.1`, 28 Aug |
+| 3 | Dependency hygiene | patch release | after Phase 2 | **Done** — absorbed into Phase 2 |
 
-**Status.** Phase 0 shipped as `v0.11.0-preview.1` and Phase 1 is **satisfied**:
-the install reports `0.11.0-preview.1+5f5bc34`, so it carries the
-framework-agnostic updater and can cross the TFM boundary. Phase 2 is therefore
-unblocked and ships as `0.12.0-preview.1`. Phase 3 remains deferred.
+**Status: complete.** All four phases landed on 27–28 August 2026, roughly ten
+weeks ahead of the .NET 8 end-of-support date. The application now targets
+`net10.0-windows` on SDK `10.0.400`, bundling runtime `10.0.11`.
 
-Re-check the gate before tagging if any further install exists — adoption means
-each install *reporting* the bridge version, not the release merely being
-published.
+The phased sequence did its job. The bridge release existed solely so the
+retarget could be delivered as an **in-place update** rather than a manual
+reinstall, and that is what happened — see Phase 1 for the verification.
 
-Dates leave roughly four weeks of slack before the 10 November deadline. That
-slack is deliberate: if Phase 2 validation surfaces a problem in composite
-ReadyToRun on `win-arm64` or in the test runner, the fix window should be weeks,
-not days.
+### What the phasing actually bought
+
+Worth recording, because the cost of Phase 0 was not obvious up front: shipping
+a separate .NET 8 bridge release looked like pure overhead. It was not. Without
+it, every existing install would have needed a manual reinstall, because those
+builds bake `-f net8.0-windows` into the update script they generate and cannot
+cross a TFM boundary. The bridge was the difference between a seamless upgrade
+and a hands-on recovery on every machine.
+
+The dates above left roughly four weeks of slack before the deadline. In the
+event the work completed well inside it, but the slack was the right call: it
+existed so that a problem in composite ReadyToRun on `win-arm64` or in the test
+runner would have had a fix window measured in weeks rather than days.
 
 ### Release mechanics
 
@@ -56,19 +65,29 @@ Both release phases go out through `.github/workflows/release.yml`, which fires
 on a `v*` tag and **fails the build unless the tag matches `<Version>` in
 `ControlTower.Desktop.csproj`**. Bump the csproj version in the same commit as
 the tag. A version containing `-` is published as a prerelease, which is the
-current convention (`0.11.0-preview.1` carries the Phase 0 bridge).
+current convention: `0.11.0-preview.1` carried the Phase 0 bridge and
+`0.12.0-preview.1` carried the .NET 10 retarget.
+
+Release tags are protected and cannot be deleted once pushed. A bad release is
+corrected by publishing a new version, never by retagging.
 
 ### Critical path
 
-**Phase 1 is a hard gate, not a formality.** Phase 2 must not land until every
-install is running the Phase 0 build. An install still on the current binary has
+**Phase 1 was a hard gate, not a formality.** Phase 2 could not land until every
+install was running the Phase 0 build. An install still on the older binary has
 `-f net8.0-windows` baked into its update script and cannot cross the TFM
-boundary — see Phase 0 below. The consequence of getting this order wrong is a
-broken install requiring manual recovery, not a failed build.
+boundary — see Phase 0 below. The consequence of getting this order wrong would
+have been a broken install requiring manual recovery, not a failed build.
 
-This is also why Phase 0 should ship soon even though the deadline is months
-away. Leaving both phases to November forces them into a rushed sequence with no
-adoption window between them.
+This ordering is why Phase 0 shipped first even though the deadline was months
+away. Leaving both phases to November would have forced them into a rushed
+sequence with no adoption window between them.
+
+**This constraint outlives the .NET 10 move.** Any future change to the target
+framework, including a .NET 10 to .NET 11 move, needs the same bridge-then-gate
+sequence unless the updater is redesigned. Phase 0 made the updater
+framework-agnostic, so the bridge step should not be needed again — but the
+adoption gate still applies whenever the runtime a build depends on changes.
 
 ### Phase 0 has standalone value
 
@@ -181,9 +200,10 @@ That is unavoidable and should be called out in the release notes.
 
 **Satisfied on 28 Aug 2026.** No code.
 
-Confirm every install is running the Phase 0 build before Phase 2 is merged.
-Check the version each install reports; do not infer adoption from the fact that
-a release was published.
+The rule the gate applied: every install must be running the Phase 0 build
+before Phase 2 is merged, established by checking the version each install
+*reports* — adoption is never inferred from the fact that a release was
+published.
 
 Evidence for the current install:
 
@@ -198,6 +218,25 @@ framework-agnostic updater rather than merely sharing a version string.
 
 If an install cannot be upgraded in time, it needs a manual re-install after
 Phase 2 rather than an in-place update.
+
+### Outcome — the in-place update worked
+
+This was the one step that could not be validated in advance: it needs a
+published `net10.0` build to update *to*, so until Phase 2 shipped it was
+reasoning and unit tests rather than evidence. Confirmed on 28 Aug 2026 by
+updating the installed application and re-reading it from disk:
+
+| Check | Before | After |
+|---|---|---|
+| `ProductVersion` | `0.11.0-preview.1+5f5bc34` | `0.12.0-preview.1+63cba58` |
+| `runtimeconfig.json` `tfm` | `net8.0` | `net10.0` |
+| Bundled `Microsoft.NETCore.App` | `8.0.30` | `10.0.11` |
+| Manual reinstall required | — | no |
+
+The embedded commit `63cba58` matches the Phase 2 merge commit on `main`, so
+this is the retargeted build and not a coincidental version match. The TFM
+boundary was crossed in place, which is the entire justification for Phase 0
+existing as a separate release.
 
 ## Phase 2 — the retarget
 
@@ -342,22 +381,77 @@ Order matters; two steps will fail if run early.
 
 ## Phase 3 — dependency hygiene
 
-Deliberately held back so the framework move stays a single variable. Pick these
-up once .NET 10 is shipped and stable:
+**Complete.** Delivered ahead of Phase 2 rather than after it, which was not the
+plan. Recorded here because the deviation is instructive.
 
-| Package | Current | Latest on proxy feed |
+| Package | Was | Now |
 |---|---|---|
 | `Microsoft.NET.Test.Sdk` | 17.14.1 | 18.9.0 |
 | `xunit.runner.visualstudio` | 2.8.2 | 4.0.0 |
 | `coverlet.collector` | 6.0.4 | 10.0.1 |
 | `YamlDotNet` | 16.3.0 | 18.1.0 |
 
-Deferral is safe. `Microsoft.NET.Test.Sdk 17.14.1` ships `net8.0` build and
-testhost assets, which NuGet considers compatible with `net10.0`;
-`xunit.runner.visualstudio 2.8.2` ships a `net6.0` adapter, likewise
-compatible. .NET 10 keeps VSTest as the `dotnet test` default and this repo does
-not opt into Microsoft.Testing.Platform. **Do not** opt in during this work —
-xUnit v2 would then need its own migration.
+The intent was to hold these back so the framework move stayed a single
+variable. Dependabot opened the identical four bumps mid-flight, so the choice
+was to merge them or sit on an approved pull request for weeks. They were merged
+on `net8.0` first, then validated against `net10.0` on a throwaway branch
+*before* the retarget landed — 785/785 tests, no warnings, no audit findings. The
+single-variable principle was preserved by testing the combination up front
+rather than by sequencing.
+
+Verified complete on 28 Aug 2026 against the corporate proxy feed:
+
+| Check | Result |
+|---|---|
+| `dotnet list package --outdated` | no updates for any project |
+| `dotnet list package --deprecated` | none |
+| `dotnet list package --vulnerable --include-transitive` | none |
+
+### The RID lock file trap
+
+Merging those bumps broke the release path on `main`, and every CI check passed
+anyway. The cause is worth knowing, because it will recur:
+
+**Dependabot does not maintain the RID lock files.** It updated
+`Directory.Packages.props` and the three base `packages.lock.json` files, but not
+the six `packages.win-{x64,arm64}.lock.json` files, which only
+`Build-ReleasePackages.ps1` consumes. That left the central version and the RID
+dependency graph disagreeing, so the release restore failed with `NU1004` while
+`dotnet restore <sln> --locked-mode` — the command CI actually ran — succeeded.
+Solution-level restore does not evaluate the RID lock files.
+
+The consequence is a class of breakage that merges green and only surfaces when
+a release is attempted. `ci.yml` now runs a locked RID restore for both
+architectures, mirroring the release script, so this fails on the pull request
+that causes it. **If a dependency bump ever touches a package reachable from
+Desktop or Infrastructure, the RID lock files must be regenerated in the same
+change.**
+
+Regenerate them with the same properties the release uses, or the graph will not
+match:
+
+```
+dotnet restore src\ControlTower.Desktop\ControlTower.Desktop.csproj `
+  -r win-x64 --force-evaluate `
+  -p:PublishReadyToRun=true -p:SelfContained=true `
+  -p:NuGetLockFilePath=packages.win-x64.lock.json
+```
+
+Restoring the Desktop project regenerates the lock files for every project in
+its graph, so one command per RID covers all six files.
+
+Two traps when checking the result. `dotnet restore` writes CRLF while the
+repository stores LF, so `git status` reports lock files as modified when their
+content is unchanged — **trust `git diff --stat`, not `git status`**. And
+`ControlTower.Core` has no `PackageReference` at all, so its RID locks never
+change semantically and should not be committed on line-ending churn alone.
+
+The one constraint that still applies: .NET 10 keeps VSTest as the `dotnet test`
+default and this repository does not opt into Microsoft.Testing.Platform.
+**Do not opt in** without planning it as its own piece of work — xUnit v2 would
+then need its own migration. The `xunit.runner.visualstudio` 2.8.2 to 4.0.0 bump
+does *not* require it; the v4 runner discovers and runs xUnit 2.9.3 tests
+unchanged, confirmed by the full 785-test suite passing on it.
 
 Residual .NET 8-versioned packages were expected to survive in the test graph
 (`System.Reflection.Metadata 8.0.0`, `System.Collections.Immutable 8.0.0`, both
@@ -373,12 +467,14 @@ obsolete `X509Certificate2` constructors, `RNGCryptoServiceProvider`,
 runtime-location APIs in use are `AppContext.BaseDirectory` and
 `Process.GetCurrentProcess().MainModule`, both stable.
 
-**Expect a `runtimeconfig.json` diff.** On `net8.0` the WPF SDK emitted
+**A `runtimeconfig.json` diff was expected, and appeared exactly as predicted.**
+On `net8.0` the WPF SDK emitted
 `System.Runtime.Serialization.EnableUnsafeBinaryFormatterSerialization: true`.
 `BinaryFormatter` was removed from the runtime in .NET 9, so on `net10.0` that
 switch is emitted as `false` and `CSWINRT_USE_WINDOWS_UI_XAML_PROJECTIONS`
-appears alongside it. Nothing in this repository uses `BinaryFormatter` — treat
-the change as expected, not a regression.
+appears alongside it. Both were confirmed in the shipped `0.12.0-preview.1`
+build. Nothing in this repository uses `BinaryFormatter`, so this is expected,
+not a regression.
 
 **WPF theming is unaffected.** `App.xaml:8-13` merges only repository-owned
 dictionaries (`Colors`, `Spacing`, `Typography`, `Components`), there is no
