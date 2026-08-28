@@ -8,7 +8,7 @@ namespace ControlTower.Infrastructure.Theme
     /// in Windows 11 22000. We keep the policy in <c>Infrastructure</c>
     /// so the WPF interop call in Desktop stays a thin shim and the
     /// build-number gate is testable on any host (including the CI
-    /// xUnit runner which targets <c>net8.0</c>, not Windows).
+    /// xUnit runner which targets <c>net10.0</c>, not Windows).
     /// </summary>
     public static class MicaSupportPolicy
     {

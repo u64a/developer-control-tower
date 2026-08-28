@@ -19,7 +19,7 @@ $toolManifestPath = Join-Path $repoRoot '.config\dotnet-tools.json'
 $iconPath = Join-Path $repoRoot 'src\ControlTower.Desktop\Assets\app.ico'
 $boundaryTestPath = Join-Path $repoRoot 'Test-PublicSourceBoundary.ps1'
 $vulnerabilityTestPath = Join-Path $repoRoot 'Test-NuGetVulnerabilities.ps1'
-$runtimeVersion = '8.0.30'
+$runtimeVersion = '10.0.11'
 $requiredPayloadFiles = @(
     'LICENSE',
     'THIRD_PARTY_NOTICES.md',
@@ -121,10 +121,10 @@ function Assert-ReleaseMetadata {
     $globalJsonPath = Join-Path $repoRoot 'global.json'
     $globalJson = Get-Content -LiteralPath $globalJsonPath -Raw |
         ConvertFrom-Json
-    if ([string]$globalJson.sdk.version -ne '8.0.424' -or
+    if ([string]$globalJson.sdk.version -ne '10.0.400' -or
         [string]$globalJson.sdk.rollForward -ne 'disable' -or
         [bool]$globalJson.sdk.allowPrerelease) {
-        throw 'global.json must pin stable SDK 8.0.424 with rollForward disabled.'
+        throw 'global.json must pin stable SDK 10.0.400 with rollForward disabled.'
     }
 
     foreach ($relativePath in $requiredPayloadFiles) {
@@ -383,10 +383,18 @@ foreach ($architecture in $architectures) {
     Reset-OutputDirectory $publishPath
     Reset-OutputDirectory $releasePath
 
+    # ReadyToRun packs (crossgen2) are acquired at RESTORE time, and only when
+    # the publish properties are set explicitly on the restore command. Without
+    # them the pack is never downloaded and the --no-restore publish below dies
+    # with NETSDK1094. Measured cold-cache on .NET 10: restoring without these
+    # leaves crossgen2 absent; restoring with them fetches it and publish
+    # succeeds. These must stay in step with the publish arguments that follow.
     Invoke-Checked -Command dotnet -Arguments @(
         'restore', $projectPath,
         '-r', $rid,
         '--locked-mode',
+        '-p:PublishReadyToRun=true',
+        '-p:SelfContained=true',
         "-p:NuGetLockFilePath=$lockFileName",
         '--nologo',
         '--verbosity', 'quiet')

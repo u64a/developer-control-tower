@@ -441,7 +441,7 @@ public class UpdateServiceTests : IDisposable
         var shell = new FakeShellLauncher { ReturnedPid = 12345 };
         var service = new UpdateService(
             git, shell,
-            executablePathProvider: () => Path.Combine(repoRoot, "src", "ControlTower.Desktop", "bin", "Release", "net8.0-windows", "ControlTower.Desktop.exe"),
+            executablePathProvider: () => Path.Combine(repoRoot, "src", "ControlTower.Desktop", "bin", "Release", "net10.0-windows", "ControlTower.Desktop.exe"),
             currentProcessIdProvider: () => 7777,
             tempPathProvider: () => tempRoot,
             logFolderProvider: () => logRoot,
