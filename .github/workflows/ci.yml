@@ -74,6 +74,34 @@ jobs:
             throw "Restore or publish modified tracked files (lock files must stay unchanged):`n$dirty"
           }
 
+      # The six RID lock files are only consumed by Build-ReleasePackages.ps1,
+      # so nothing here would otherwise notice them going stale. Dependabot
+      # updates Directory.Packages.props and the base lock files but has no
+      # knowledge of the RID ones, which leaves the central version and the RID
+      # graph disagreeing and fails the release restore with NU1004 -- long
+      # after the change that caused it was merged. This mirrors the release
+      # script's RID restore so that drift surfaces on the pull request.
+      - name: Verify RID lock files are current
+        shell: pwsh
+        run: |
+          $project = 'src\ControlTower.Desktop\ControlTower.Desktop.csproj'
+          foreach ($rid in @('win-x64', 'win-arm64')) {
+            dotnet restore $project `
+              -r $rid `
+              --locked-mode `
+              -p:PublishReadyToRun=true `
+              -p:SelfContained=true `
+              "-p:NuGetLockFilePath=packages.$rid.lock.json" `
+              --nologo
+            if ($LASTEXITCODE -ne 0) {
+              throw "The locked $rid restore failed. packages.$rid.lock.json is out of step with Directory.Packages.props; regenerate it with --force-evaluate and the same properties."
+            }
+          }
+          $dirty = git status --porcelain
+          if ($dirty) {
+            throw "The RID restore modified tracked files (lock files must stay unchanged):`n$dirty"
+          }
+
       - name: Audit NuGet vulnerabilities
         shell: pwsh
         run: .\Test-NuGetVulnerabilities.ps1
