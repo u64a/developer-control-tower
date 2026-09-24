@@ -30,8 +30,8 @@
       packages, so retargeting alone would not move them. Central transitive
       pinning is enabled above, so these two entries lift them.
     -->
-    <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.11" />
-    <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.11" />
+    <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.12" />
+    <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.12" />
 
     <!-- Test -->
     <PackageVersion Include="coverlet.collector" Version="10.0.1" />

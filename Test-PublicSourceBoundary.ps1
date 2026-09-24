@@ -195,8 +195,8 @@ foreach ($requiredPath in @(
     'Build-ReleasePackages.ps1',
     'library-seed\library.yml',
     '.config\dotnet-tools.json',
-    'licenses\dotnet-runtime-10.0.11\LICENSE.TXT',
-    'licenses\dotnet-runtime-10.0.11\THIRD-PARTY-NOTICES.TXT')) {
+    'licenses\dotnet-runtime-10.0.12\LICENSE.TXT',
+    'licenses\dotnet-runtime-10.0.12\THIRD-PARTY-NOTICES.TXT')) {
     $normalizedRequiredPath = $requiredPath.Replace('\', '/')
     if ($trackedPaths -notcontains $normalizedRequiredPath) {
         throw "Required public file is missing: '$requiredPath'."
