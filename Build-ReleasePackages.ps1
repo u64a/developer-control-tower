@@ -19,7 +19,7 @@ $toolManifestPath = Join-Path $repoRoot '.config\dotnet-tools.json'
 $iconPath = Join-Path $repoRoot 'src\ControlTower.Desktop\Assets\app.ico'
 $boundaryTestPath = Join-Path $repoRoot 'Test-PublicSourceBoundary.ps1'
 $vulnerabilityTestPath = Join-Path $repoRoot 'Test-NuGetVulnerabilities.ps1'
-$runtimeVersion = '10.0.11'
+$runtimeVersion = '10.0.12'
 $requiredPayloadFiles = @(
     'LICENSE',
     'THIRD_PARTY_NOTICES.md',
@@ -121,10 +121,10 @@ function Assert-ReleaseMetadata {
     $globalJsonPath = Join-Path $repoRoot 'global.json'
     $globalJson = Get-Content -LiteralPath $globalJsonPath -Raw |
         ConvertFrom-Json
-    if ([string]$globalJson.sdk.version -ne '10.0.400' -or
+    if ([string]$globalJson.sdk.version -ne '10.0.401' -or
         [string]$globalJson.sdk.rollForward -ne 'disable' -or
         [bool]$globalJson.sdk.allowPrerelease) {
-        throw 'global.json must pin stable SDK 10.0.400 with rollForward disabled.'
+        throw 'global.json must pin stable SDK 10.0.401 with rollForward disabled.'
     }
 
     foreach ($relativePath in $requiredPayloadFiles) {

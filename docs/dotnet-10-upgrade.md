@@ -504,3 +504,37 @@ is registered **twice** under different source names (`azure-default` and
 This is user-level configuration, not a repository invariant — the repo has no
 checked-in `NuGet.Config`. Every package needed for this upgrade was confirmed
 present on the proxy.
+
+## Servicing after the upgrade
+
+.NET 10 ships a security patch roughly monthly (Patch Tuesday). **Dependabot
+does not track the runtime**, so nothing in the repository raises an alert when
+the bundled runtime falls behind — check
+`https://builds.dotnet.microsoft.com/dotnet/release-metadata/10.0/releases.json`
+for `security: true` releases instead.
+
+Two symptoms usually arrive together. Microsoft Update replaces the installed
+SDK (for example 10.0.400 with 10.0.401), and because `global.json` pins an exact
+version with `rollForward: disable`, `dotnet` stops working in this repository
+locally until the pin moves. CI is unaffected because `setup-dotnet` installs the
+pinned SDK.
+
+The bundled runtime is not pinned anywhere in the project files: a self-contained
+publish takes the runtime pack that the pinned SDK ships. Moving `global.json`
+is what actually changes the runtime; everything else is metadata that must agree
+with it. A servicing bump, first done for 10.0.12 (SDK 10.0.401), touches:
+
+| File | Change |
+|---|---|
+| `global.json` | SDK version |
+| `Build-ReleasePackages.ps1` | `$runtimeVersion`, and the SDK check and its message in `Assert-ReleaseMetadata` |
+| `Directory.Packages.props` | the two `Microsoft.Extensions.*` transitive pins |
+| `licenses/dotnet-runtime-<ver>/` | rename, and re-download both files from the matching `dotnet/runtime` tag |
+| `ControlTower.Desktop.csproj` | the four licence `Content` paths, and `<Version>` |
+| `Test-PublicSourceBoundary.ps1` | the two licence paths |
+| `THIRD_PARTY_NOTICES.md` | runtime, pin and SDK versions — and re-check **every** row against the RID lock graph |
+| lock files | regenerate all ten; seven change, Core's do not |
+
+Then prove the result rather than trusting the edits: run all three locked
+restores, build and test, and run `Build-ReleasePackages.ps1` and read
+`System.Private.CoreLib.dll`'s `ProductVersion` from each RID's publish output.

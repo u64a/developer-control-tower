@@ -6,24 +6,24 @@ the committed `packages*.lock.json` files.
 
 | Component | Version | Licence | Copyright holder(s) |
 |---|---:|---|---|
-| .NET Runtime and Windows Desktop Runtime | 10.0.11 | MIT and third-party terms | .NET Foundation and Contributors |
-| Microsoft.Extensions.DependencyInjection.Abstractions | 10.0.11 | MIT | .NET Foundation and Contributors |
-| Microsoft.Extensions.Logging.Abstractions | 10.0.11 | MIT | .NET Foundation and Contributors |
+| .NET Runtime and Windows Desktop Runtime | 10.0.12 | MIT and third-party terms | .NET Foundation and Contributors |
+| Microsoft.Extensions.DependencyInjection.Abstractions | 10.0.12 | MIT | .NET Foundation and Contributors |
+| Microsoft.Extensions.Logging.Abstractions | 10.0.12 | MIT | .NET Foundation and Contributors |
 | SSH.NET | 2026.0.0 | MIT | Renci, Oleg Kapeljushnik, Gert Driesen and contributors |
 | BouncyCastle.Cryptography | 2.7.0 | MIT | The Legion of the Bouncy Castle Inc. |
 | Velopack | 1.2.0 | MIT | Caelan Sayler; Velopack Ltd. |
-| YamlDotNet | 16.3.0 | MIT | Antoine Aubry and contributors |
+| YamlDotNet | 18.1.0 | MIT | Antoine Aubry and contributors |
 
-The authoritative .NET Runtime 10.0.11 licence and third-party notices are
+The authoritative .NET Runtime 10.0.12 licence and third-party notices are
 redistributed without modification at:
 
-- `licenses/dotnet-runtime-10.0.11/LICENSE.TXT`
-- `licenses/dotnet-runtime-10.0.11/THIRD-PARTY-NOTICES.TXT`
+- `licenses/dotnet-runtime-10.0.12/LICENSE.TXT`
+- `licenses/dotnet-runtime-10.0.12/THIRD-PARTY-NOTICES.TXT`
 
-They are sourced from the `v10.0.11` tag of
-<https://github.com/dotnet/runtime>. SDK 10.0.400 is pinned in `global.json`;
+They are sourced from the `v10.0.12` tag of
+<https://github.com/dotnet/runtime>. SDK 10.0.401 is pinned in `global.json`;
 that SDK resolves the self-contained .NET and Windows Desktop runtime packs
-to 10.0.11.
+to 10.0.12.
 
 Component licence provenance:
 
@@ -32,9 +32,9 @@ Component licence provenance:
   <https://github.com/bcgit/bc-csharp/blob/release-2.7.0/crypto/License.html>
 - Velopack: <https://github.com/velopack/velopack/blob/1.2.0/LICENSE>
 - YamlDotNet:
-  <https://github.com/aaubry/YamlDotNet/blob/v16.3.0/LICENSE.txt>
+  <https://github.com/aaubry/YamlDotNet/blob/v18.1.0/LICENSE.txt>
 - Microsoft.Extensions:
-  <https://github.com/dotnet/runtime/blob/v10.0.11/LICENSE.TXT>
+  <https://github.com/dotnet/runtime/blob/v10.0.12/LICENSE.TXT>
 
 ## MIT licence - SSH.NET
 
