@@ -254,8 +254,23 @@ namespace ControlTower.Core.UseCases
 
         public LaunchResult Launch(ProjectRef projectRef, LaunchTargetKind targetKind)
         {
+            return Launch(projectRef, targetKind, null);
+        }
+
+        /// <summary>
+        /// Launches a project. When <paramref name="environmentOverride"/> is
+        /// set (a one-off "Open with…"), it replaces the project's configured
+        /// launch environment for this launch only; nothing is persisted.
+        /// </summary>
+        public LaunchResult Launch(ProjectRef projectRef, LaunchTargetKind targetKind, string environmentOverride)
+        {
             var projectResult = _projectProvider.LoadProject(projectRef.Path, ResolveMetadataRoot(projectRef));
             var project = projectResult.Project;
+
+            if (!string.IsNullOrWhiteSpace(environmentOverride) && project?.Launch != null)
+            {
+                project.Launch.Environment = LaunchEnvironmentCatalog.Normalize(environmentOverride);
+            }
 
             // For GitHub/Ado launches, fall back to the cached repo origin URL
             // when project.yml has no explicit launch.github / launch.ado set.

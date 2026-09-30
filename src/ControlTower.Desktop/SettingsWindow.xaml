@@ -225,6 +225,28 @@
                                FontSize="12"
                                Margin="0,2,0,0" />
 
+                    <!-- Launch environment -->
+                    <TextBlock Text="LAUNCH ENVIRONMENT"
+                               Style="{StaticResource SectionTitleStyle}"
+                               Margin="0,16,0,4" />
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Open projects in" VerticalAlignment="Center" Margin="0,0,12,0" />
+                        <ComboBox Grid.Column="1"
+                                  x:Name="DefaultLaunchEnvironmentCombo"
+                                  DisplayMemberPath="DisplayName"
+                                  SelectedValuePath="Id"
+                                  AutomationProperties.Name="Default launch environment" />
+                    </Grid>
+                    <TextBlock Text="The default for every project. Override it per project from the row's right-click menu (Launch environment). Terminal environments run in PowerShell inside Windows Terminal; add your own under launch.environments in settings.yml."
+                               Foreground="{DynamicResource SecondaryTextBrush}"
+                               FontSize="12"
+                               TextWrapping="Wrap"
+                               Margin="0,2,0,0" />
+
                     <!-- Updates -->
                     <TextBlock Text="UPDATES"
                                Style="{StaticResource SectionTitleStyle}"
@@ -287,7 +309,7 @@
                     <TextBlock Text="LAUNCHER"
                                Style="{StaticResource SectionTitleStyle}"
                                Margin="0,16,0,4" />
-                    <TextBlock Text="Press Ctrl+K anywhere in the app to open the launcher. Search a project, then Enter to open it in VS Code, Ctrl+Enter to expand into the full console, or Ctrl+L to open the asset library."
+                    <TextBlock Text="Press Ctrl+K anywhere in the app to open the launcher. Search a project, then Enter to open it in its launch environment (VS Code by default), Ctrl+Enter to expand into the full console, or Ctrl+L to open the asset library."
                                Foreground="{DynamicResource SecondaryTextBrush}"
                                FontSize="12"
                                TextWrapping="Wrap" />

@@ -265,7 +265,10 @@ namespace ControlTower.Desktop.Bootstrap
                 updateOptions,
                 relocateService,
                 profileManager,
-                profileState);
+                profileState)
+            {
+                LaunchEnvironments = settings.LaunchEnvironments ?? LaunchEnvironmentCatalog.CreateDefault(settings.VsCodeCommand)
+            };
         }
 
         private string ResolveLibraryPath(string configured)
@@ -394,5 +397,8 @@ namespace ControlTower.Desktop.Bootstrap
         public IRelocateProjectService RelocateService { get; }
         public WorkspaceProfileManager ProfileManager { get; }
         public WorkspaceProfileState ProfileState { get; }
+
+        /// <summary>Effective launch environments and global default from settings.</summary>
+        public LaunchEnvironmentCatalog LaunchEnvironments { get; init; } = LaunchEnvironmentCatalog.CreateDefault();
     }
 }

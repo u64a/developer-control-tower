@@ -13,14 +13,31 @@ namespace ControlTower.Desktop.ViewModels
     public sealed class ProjectRow : ObservableObject
     {
         private readonly Action<ProjectRow> _onSelectionChanged;
+        private readonly Func<ProjectOverview, LaunchEnvironmentDisplay> _launchResolver;
         private ProjectOverview _project;
         private bool _isSelected;
 
         public ProjectRow(ProjectOverview project, bool isSelected, Action<ProjectRow> onSelectionChanged)
+            : this(project, isSelected, onSelectionChanged, null)
+        {
+        }
+
+        public ProjectRow(
+            ProjectOverview project,
+            bool isSelected,
+            Action<ProjectRow> onSelectionChanged,
+            Func<ProjectOverview, LaunchEnvironmentDisplay> launchResolver)
         {
             _project = project;
             _isSelected = isSelected;
             _onSelectionChanged = onSelectionChanged;
+            _launchResolver = launchResolver;
+        }
+
+        /// <summary>The environment this row opens in (icon + name for the table column).</summary>
+        public LaunchEnvironmentDisplay Launch
+        {
+            get { return _launchResolver == null || _project == null ? null : _launchResolver(_project); }
         }
 
         /// <summary>The wrapped portfolio overview (swappable on in-place seed/refresh).</summary>
@@ -39,6 +56,7 @@ namespace ControlTower.Desktop.ViewModels
                     // (which binds {Binding RepoState}); notify so the lamp
                     // recolours when the overview is swapped in place on seed.
                     OnPropertyChanged("RepoState");
+                    OnPropertyChanged("Launch");
                 }
             }
         }

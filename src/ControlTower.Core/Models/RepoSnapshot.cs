@@ -168,6 +168,9 @@ namespace ControlTower.Core.Models
 
         public string VsCodePath { get; set; }
 
+        /// <summary>Project's configured launch environment id (empty = global default).</summary>
+        public string LaunchEnvironment { get; set; } = string.Empty;
+
         public string PrimaryDocPath { get; set; }
 
         public string PlanningPath { get; set; }

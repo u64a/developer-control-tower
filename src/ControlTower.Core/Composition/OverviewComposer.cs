@@ -35,6 +35,7 @@ namespace ControlTower.Core.Composition
             overview.GitHubUrl = OriginUrlResolver.ResolveGitHubUrl(project, snapshot);
             overview.AdoUrl = OriginUrlResolver.ResolveAdoUrl(project, snapshot);
             overview.VsCodePath = project.Launch == null ? string.Empty : project.Launch.VsCodeLocal;
+            overview.LaunchEnvironment = project.Launch == null ? string.Empty : project.Launch.Environment ?? string.Empty;
             overview.PrimaryDocPath = ResolvePrimaryDoc(project);
             overview.PlanningPath = ResolvePlanningPath(project);
             overview.PlanningAuthorityNote = BuildPlanningAuthorityNote(project);

@@ -248,6 +248,8 @@ namespace ControlTower.Desktop.ViewModels
                 OnPropertyChanged("CanOpenCodeNormal");
                 OnPropertyChanged("CanOpenCodeAdmin");
                 OnPropertyChanged("OpenCodeDisabledTooltip");
+                OnPropertyChanged("SelectedLaunch");
+                OnPropertyChanged("OpenCodeLabel");
                 OnPropertyChanged("CanOpenRemote");
                 OnPropertyChanged("CanOpenGitHub");
                 OnPropertyChanged("CanOpenAdo");
@@ -424,7 +426,17 @@ namespace ControlTower.Desktop.ViewModels
         // one is already running on the same desktop.
         public bool CanOpenCodeNormal
         {
-            get { return CanOpenCode && !_codeAdminLatched; }
+            get
+            {
+                // Only VS Code has the mixed-elevation limitation; other
+                // environments (terminal CLIs, custom editors) also handle SSH.
+                if (SelectedLaunch != null && SelectedLaunch.Id != LaunchEnvironmentCatalog.VsCodeId)
+                {
+                    return CanOpenCode || CanOpenRemote;
+                }
+
+                return CanOpenCode && !_codeAdminLatched;
+            }
         }
 
         // Tooltip text for the regular Open Code button. Stays informational
@@ -434,12 +446,125 @@ namespace ControlTower.Desktop.ViewModels
         {
             get
             {
-                if (_codeAdminLatched)
+                var launch = SelectedLaunch;
+                if (_codeAdminLatched && (launch == null || launch.Id == LaunchEnvironmentCatalog.VsCodeId))
                 {
                     return "Disabled for this session: VS Code was launched as Administrator. " +
                            "Use 'Open Code RunAs Admin' for any further projects until you close all elevated VS Code windows and restart Developer Control Tower.";
                 }
-                return "Open this project in VS Code.";
+                return "Open this project in " + (launch == null ? "VS Code" : launch.Name) + ".";
+            }
+        }
+
+        private LaunchEnvironmentCatalog _launchEnvironments = LaunchEnvironmentCatalog.CreateDefault();
+        private readonly Dictionary<string, LaunchEnvironmentDisplay> _launchDisplays = new Dictionary<string, LaunchEnvironmentDisplay>(StringComparer.Ordinal);
+
+        /// <summary>Launch environments from settings. Set by the shell before the portfolio loads.</summary>
+        public LaunchEnvironmentCatalog LaunchEnvironments
+        {
+            get { return _launchEnvironments; }
+            set
+            {
+                _launchEnvironments = value ?? LaunchEnvironmentCatalog.CreateDefault();
+                _launchDisplays.Clear();
+                OnPropertyChanged();
+                OnPropertyChanged("SelectedLaunch");
+                OnPropertyChanged("OpenCodeLabel");
+                OnPropertyChanged("CanOpenCodeNormal");
+                OnPropertyChanged("OpenCodeDisabledTooltip");
+            }
+        }
+
+        /// <summary>Effective launch environment for a project (its own choice, else the global default).</summary>
+        public LaunchEnvironmentDisplay ResolveLaunch(ProjectOverview project)
+        {
+            if (project == null)
+            {
+                return null;
+            }
+
+            var usesDefault = string.IsNullOrWhiteSpace(project.LaunchEnvironment) ||
+                              _launchEnvironments.IsUnknown(project.LaunchEnvironment);
+            var environment = _launchEnvironments.Resolve(project.LaunchEnvironment);
+            var key = environment.Id + (usesDefault ? "|default" : string.Empty);
+            if (!_launchDisplays.TryGetValue(key, out var display))
+            {
+                display = new LaunchEnvironmentDisplay(environment, LaunchEnvironmentIconCache.Get(environment), usesDefault);
+                _launchDisplays[key] = display;
+            }
+
+            return display;
+        }
+
+        public LaunchEnvironmentDisplay SelectedLaunch
+        {
+            get { return ResolveLaunch(SelectedProject); }
+        }
+
+        /// <summary>Label for the primary open button, e.g. "_Open in Claude Code".</summary>
+        public string OpenCodeLabel
+        {
+            get
+            {
+                var launch = SelectedLaunch;
+                return launch == null ? "Open _Code" : "_Open in " + launch.Name.Replace("_", "__");
+            }
+        }
+
+        /// <summary>
+        /// True when the primary open action should go through the project's
+        /// environment even for SSH-only projects (terminal environments run
+        /// ssh themselves; the VS Code path keeps its local/remote split).
+        /// </summary>
+        public bool PrefersEnvironmentLaunch(ProjectOverview project)
+        {
+            var launch = ResolveLaunch(project);
+            return launch != null && launch.Id != LaunchEnvironmentCatalog.VsCodeId;
+        }
+
+        /// <summary>One-off launch in a specific environment without changing the project's setting.</summary>
+        public void LaunchWith(ProjectOverview project, string environmentId)
+        {
+            if (project == null)
+            {
+                StatusMessage = "No project";
+                return;
+            }
+
+            var projectRef = new ProjectRef { Id = project.Id, Path = project.SourcePath };
+            var result = _service.Launch(projectRef, LaunchTargetKind.Code, environmentId);
+            StatusMessage = (!result.Success && result.Issue != null && !string.IsNullOrWhiteSpace(result.Issue.Code))
+                ? "[" + result.Issue.Code + "] " + result.Message
+                : result.Message;
+        }
+
+        /// <summary>
+        /// Persists a project's launch environment in its project.yml.
+        /// Null/empty resets it to the global default.
+        /// </summary>
+        public void SetProjectLaunchEnvironment(ProjectOverview project, string environmentId)
+        {
+            if (project == null) return;
+
+            var def = _service.GetProjectDefinition(new ProjectRef { Id = project.Id, Path = project.SourcePath });
+            if (def == null)
+            {
+                StatusMessage = "Could not load project to update.";
+                return;
+            }
+
+            var request = BuildRequestFromDefinition(def, project.SourcePath);
+            request.LaunchEnvironment = LaunchEnvironmentCatalog.Normalize(environmentId);
+
+            var result = _service.RegisterProject(request);
+            StatusMessage = result.Success
+                ? project.DisplayName + " opens in " + _launchEnvironments.Resolve(request.LaunchEnvironment).DisplayName +
+                  (request.LaunchEnvironment.Length == 0 ? " (default)" : string.Empty)
+                : result.Message;
+            if (result.Success)
+            {
+                Load();
+                ApplyProjectView(def.Id);
             }
         }
 
@@ -682,10 +807,23 @@ namespace ControlTower.Desktop.ViewModels
                 return null;
             }
 
+            // Editing an existing project legitimately updates the portfolio
+            // entry — the helper sets AllowOverwrite so the duplicate-id guard
+            // doesn't reject the round-trip.
+            return BuildRequestFromDefinition(project, projectRef.Path);
+        }
+
+        /// <summary>
+        /// Round-trips an existing project definition into a registration
+        /// request (AllowOverwrite). LaunchEnvironment stays null so the
+        /// registration service preserves the project's current choice.
+        /// </summary>
+        private static ProjectRegistrationRequest BuildRequestFromDefinition(ProjectDefinition project, string sourcePath)
+        {
             return new ProjectRegistrationRequest
             {
                 ProjectId = project.Id,
-                SourcePath = projectRef.Path,
+                SourcePath = sourcePath,
                 DisplayName = project.DisplayName,
                 Summary = project.Summary,
                 LifecycleState = project.LifecycleState,
@@ -695,9 +833,6 @@ namespace ControlTower.Desktop.ViewModels
                 AdoUrl = project.Launch == null ? string.Empty : project.Launch.Ado,
                 RemoteUrl = project.Locations == null ? string.Empty : project.Locations.RemoteUrl,
                 Group = project.Group,
-                // Editing an existing project legitimately updates the portfolio
-                // entry — allow overwrite so the duplicate-id guard doesn't
-                // reject the round-trip.
                 AllowOverwrite = true
             };
         }
@@ -722,21 +857,8 @@ namespace ControlTower.Desktop.ViewModels
                 ? string.Empty
                 : group.Trim();
 
-            var request = new ProjectRegistrationRequest
-            {
-                ProjectId = def.Id,
-                SourcePath = project.SourcePath,
-                DisplayName = def.DisplayName,
-                Summary = def.Summary,
-                LifecycleState = def.LifecycleState,
-                LocalPath = def.Locations == null ? string.Empty : def.Locations.LocalPath,
-                SshTarget = def.Locations == null ? string.Empty : def.Locations.SshTarget,
-                GitHubUrl = def.Launch == null ? string.Empty : def.Launch.GitHub,
-                AdoUrl = def.Launch == null ? string.Empty : def.Launch.Ado,
-                RemoteUrl = def.Locations == null ? string.Empty : def.Locations.RemoteUrl,
-                Group = normalized,
-                AllowOverwrite = true
-            };
+            var request = BuildRequestFromDefinition(def, project.SourcePath);
+            request.Group = normalized;
 
             var result = _service.RegisterProject(request);
             StatusMessage = result.Success
@@ -1185,7 +1307,7 @@ namespace ControlTower.Desktop.ViewModels
             Projects.Clear();
             foreach (var item in items)
             {
-                Projects.Add(new ProjectRow(item, _selectedIds.Contains(item.Id), OnRowSelectionChanged));
+                Projects.Add(new ProjectRow(item, _selectedIds.Contains(item.Id), OnRowSelectionChanged, ResolveLaunch));
             }
 
             var match = Projects.FirstOrDefault(row => row.Id == selectedId);

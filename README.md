@@ -15,6 +15,11 @@ the right work surface without becoming another planning system.
 - Presents a dense, keyboard-friendly portfolio of known projects.
 - Shows branch, working-tree, upstream, availability, and recent-activity state.
 - Launches local VS Code, VS Code Remote SSH, GitHub, Azure DevOps, and docs.
+- Opens each project in its launch environment: VS Code by default, or a
+  terminal agent such as GitHub Copilot CLI or Claude Code (PowerShell in
+  Windows Terminal, over SSH for remote projects). Set the default in Settings,
+  override it per project from the row menu, and add custom environments under
+  `launch.environments`. Product icons are read from the installed tools, not bundled.
 - Supports project registration, grouping, relocation, restore, and discovery.
 - Uses user-named Workspace Profiles to scope one synced portfolio per device.
 - Maintains a portable reusable-asset library with explicit push and pull.

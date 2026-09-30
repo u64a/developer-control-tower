@@ -36,6 +36,13 @@ namespace ControlTower.Desktop
         private readonly ObservableCollection<StoreEntry> _stores = new();
         private bool _isSshSelected;
         private bool _loadingAppearance;
+        private readonly LaunchEnvironmentCatalog _launchEnvironments;
+
+        /// <summary>
+        /// Newly chosen global default launch environment, or <c>null</c>
+        /// when unchanged (the settings writer then keeps the file's value).
+        /// </summary>
+        public string ResultDefaultLaunchEnvironment { get; private set; }
 
         public SettingsWindow(
             IReadOnlyList<RepoStore> currentStores,
@@ -48,9 +55,14 @@ namespace ControlTower.Desktop
             IUpdateService updateService = null,
             UpdateOptions updateOptions = null,
             IApplicationUninstallService uninstallService = null,
-            string legacyInstallRoot = null)
+            string legacyInstallRoot = null,
+            LaunchEnvironmentCatalog launchEnvironments = null)
         {
             InitializeComponent();
+
+            _launchEnvironments = launchEnvironments ?? LaunchEnvironmentCatalog.CreateDefault();
+            DefaultLaunchEnvironmentCombo.ItemsSource = _launchEnvironments.Environments;
+            DefaultLaunchEnvironmentCombo.SelectedValue = _launchEnvironments.DefaultId;
 
             _credentialStore = credentialStore;
             _sshService = sshService;
@@ -664,9 +676,19 @@ namespace ControlTower.Desktop
             ResultStores = _stores.Select(s => s.ToModel()).ToList();
             ResultLibraryPath = (LibraryPathTextBox.Text ?? string.Empty).Trim();
             ResultUpdateOptions = CaptureUpdateOptions();
+            ResultDefaultLaunchEnvironment = CaptureDefaultLaunchEnvironment();
             Saved = true;
             DialogResult = true;
             Close();
+        }
+
+        private string CaptureDefaultLaunchEnvironment()
+        {
+            var selected = DefaultLaunchEnvironmentCombo.SelectedValue as string;
+            return string.IsNullOrWhiteSpace(selected) ||
+                   string.Equals(selected, _launchEnvironments.DefaultId, StringComparison.Ordinal)
+                ? null
+                : selected;
         }
 
         private UpdateOptions CaptureUpdateOptions()
@@ -748,6 +770,7 @@ namespace ControlTower.Desktop
                     ResultStores = _stores.Select(s => s.ToModel()).ToList();
                     ResultLibraryPath = (LibraryPathTextBox.Text ?? string.Empty).Trim();
                     ResultUpdateOptions = options;
+                    ResultDefaultLaunchEnvironment = CaptureDefaultLaunchEnvironment();
                     Saved = true;
                     UpdateLaunched = true;
                     DialogResult = true;

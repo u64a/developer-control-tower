@@ -25,6 +25,40 @@ namespace ControlTower.Infrastructure.Yaml.Dto
 
         [YamlMember(Alias = "updates")]
         public UpdatesDto Updates { get; set; }
+
+        [YamlMember(Alias = "launch")]
+        public LaunchSettingsDto Launch { get; set; }
+    }
+
+    public sealed class LaunchSettingsDto
+    {
+        [YamlMember(Alias = "default_environment")]
+        public string DefaultEnvironment { get; set; }
+
+        [YamlMember(Alias = "environments")]
+        public Dictionary<string, LaunchEnvironmentDto> Environments { get; set; }
+    }
+
+    public sealed class LaunchEnvironmentDto
+    {
+        [YamlMember(Alias = "name")]
+        public string Name { get; set; }
+
+        /// <summary><c>editor</c> or <c>terminal</c>.</summary>
+        [YamlMember(Alias = "type")]
+        public string Type { get; set; }
+
+        [YamlMember(Alias = "command")]
+        public string Command { get; set; }
+
+        [YamlMember(Alias = "args")]
+        public string Args { get; set; }
+
+        [YamlMember(Alias = "remote_command")]
+        public string RemoteCommand { get; set; }
+
+        [YamlMember(Alias = "icon")]
+        public string Icon { get; set; }
     }
 
     public sealed class ToolingDto
@@ -40,6 +74,14 @@ namespace ControlTower.Infrastructure.Yaml.Dto
 
         [YamlMember(Alias = "ssh_config_path")]
         public string SshConfigPath { get; set; }
+
+        /// <summary>Windows Terminal executable used to host terminal launch environments.</summary>
+        [YamlMember(Alias = "terminal_command")]
+        public string TerminalCommand { get; set; }
+
+        /// <summary>PowerShell executable used inside the terminal (default pwsh, else Windows PowerShell).</summary>
+        [YamlMember(Alias = "powershell_command")]
+        public string PowerShellCommand { get; set; }
     }
 
     public sealed class SecurityDto
