@@ -76,6 +76,9 @@ namespace ControlTower.Infrastructure.Yaml.Dto
 
         [YamlMember(Alias = "ado")]
         public string Ado { get; set; }
+
+        [YamlMember(Alias = "environment")]
+        public string Environment { get; set; }
     }
 
     public sealed class DocLinkDto

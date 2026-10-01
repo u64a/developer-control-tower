@@ -181,6 +181,7 @@
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="30" />
                             <ColumnDefinition Width="22" />
+                            <ColumnDefinition Width="28" />
                             <ColumnDefinition Width="2*" />
                             <ColumnDefinition Width="118" />
                             <ColumnDefinition Width="1.1*" />
@@ -192,11 +193,11 @@
                                   IsChecked="{Binding AllVisibleSelected, Mode=TwoWay}"
                                   ToolTip="Select all shown projects"
                                   AutomationProperties.Name="Select all shown projects" />
-                        <TextBlock Grid.Column="2" Text="PROJECT" Style="{StaticResource MonoLabelStyle}" />
-                        <TextBlock Grid.Column="3" Text="STATE" Style="{StaticResource MonoLabelStyle}" />
-                        <TextBlock Grid.Column="4" Text="BRANCH" Style="{StaticResource MonoLabelStyle}" />
-                        <TextBlock Grid.Column="5" Text="TREE" Style="{StaticResource MonoLabelStyle}" />
-                        <TextBlock Grid.Column="6" Text="SYNC" Style="{StaticResource MonoLabelStyle}" />
+                        <TextBlock Grid.Column="3" Text="PROJECT" Style="{StaticResource MonoLabelStyle}" />
+                        <TextBlock Grid.Column="4" Text="STATE" Style="{StaticResource MonoLabelStyle}" />
+                        <TextBlock Grid.Column="5" Text="BRANCH" Style="{StaticResource MonoLabelStyle}" />
+                        <TextBlock Grid.Column="6" Text="TREE" Style="{StaticResource MonoLabelStyle}" />
+                        <TextBlock Grid.Column="7" Text="SYNC" Style="{StaticResource MonoLabelStyle}" />
                     </Grid>
 
                     <Border DockPanel.Dock="Bottom"
@@ -327,6 +328,7 @@
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="30" />
                                         <ColumnDefinition Width="22" />
+                                        <ColumnDefinition Width="28" />
                                         <ColumnDefinition Width="2*" />
                                         <ColumnDefinition Width="118" />
                                         <ColumnDefinition Width="1.1*" />
@@ -342,7 +344,25 @@
                                              Style="{StaticResource StatusLampStyle}"
                                              VerticalAlignment="Center"
                                              AutomationProperties.Name="{Binding Project.RepoState, Converter={StaticResource RepoStateToWord}}" />
-                                    <StackPanel Grid.Column="2" VerticalAlignment="Center" Margin="0,0,8,0">
+                                    <Grid Grid.Column="2"
+                                          Width="18" Height="18"
+                                          HorizontalAlignment="Left"
+                                          VerticalAlignment="Center"
+                                          Background="Transparent"
+                                          ToolTip="{Binding Launch.ToolTip}"
+                                          AutomationProperties.Name="{Binding Launch.ToolTip}">
+                                        <Image Source="{Binding Launch.Icon}"
+                                               Width="16" Height="16"
+                                               RenderOptions.BitmapScalingMode="HighQuality" />
+                                        <TextBlock Text="{Binding Launch.Glyph}"
+                                                   FontFamily="{StaticResource SymbolIconFont}"
+                                                   FontSize="14"
+                                                   HorizontalAlignment="Center"
+                                                   VerticalAlignment="Center"
+                                                   Foreground="{DynamicResource SecondaryTextBrush}"
+                                                   Visibility="{Binding Launch.HasIcon, Converter={StaticResource BoolToVisNegated}}" />
+                                    </Grid>
+                                    <StackPanel Grid.Column="3" VerticalAlignment="Center" Margin="0,0,8,0">
                                         <TextBlock Text="{Binding Project.DisplayName}"
                                                    FontFamily="{StaticResource AppFontFamilyDisplay}"
                                                    FontSize="13.5"
@@ -355,25 +375,25 @@
                                                    TextTrimming="CharacterEllipsis"
                                                    Margin="0,1,0,0" />
                                     </StackPanel>
-                                    <ContentControl Grid.Column="3"
+                                    <ContentControl Grid.Column="4"
                                                     VerticalAlignment="Center"
                                                     HorizontalAlignment="Left"
                                                     Content="{Binding Project}"
                                                     ContentTemplate="{StaticResource StatePillTemplate}" />
-                                    <TextBlock Grid.Column="4" Text="{Binding Project.Branch}" VerticalAlignment="Center" FontFamily="{StaticResource MonoFontFamily}" FontSize="11.5" Margin="0,0,8,0" TextTrimming="CharacterEllipsis" Foreground="{DynamicResource SecondaryTextBrush}" />
-                                    <TextBlock Grid.Column="5" Text="{Binding Project.WorkingTreeStatus}" VerticalAlignment="Center" FontFamily="{StaticResource MonoFontFamily}" FontSize="11.5" TextTrimming="CharacterEllipsis" Foreground="{Binding Project.WorkingTreeStatus, Converter={StaticResource TreeToBrush}}" />
-                                    <TextBlock Grid.Column="6" Text="{Binding Project.SyncCompact}" VerticalAlignment="Center" FontFamily="{StaticResource MonoFontFamily}" FontSize="11.5" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" Foreground="{Binding Project, Converter={StaticResource SyncToBrush}}" />
+                                    <TextBlock Grid.Column="5" Text="{Binding Project.Branch}" VerticalAlignment="Center" FontFamily="{StaticResource MonoFontFamily}" FontSize="11.5" Margin="0,0,8,0" TextTrimming="CharacterEllipsis" Foreground="{DynamicResource SecondaryTextBrush}" />
+                                    <TextBlock Grid.Column="6" Text="{Binding Project.WorkingTreeStatus}" VerticalAlignment="Center" FontFamily="{StaticResource MonoFontFamily}" FontSize="11.5" TextTrimming="CharacterEllipsis" Foreground="{Binding Project.WorkingTreeStatus, Converter={StaticResource TreeToBrush}}" />
+                                    <TextBlock Grid.Column="7" Text="{Binding Project.SyncCompact}" VerticalAlignment="Center" FontFamily="{StaticResource MonoFontFamily}" FontSize="11.5" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" Foreground="{Binding Project, Converter={StaticResource SyncToBrush}}" />
 
-                                    <StackPanel x:Name="rowActions" Grid.Column="2" Grid.ColumnSpan="5"
+                                    <StackPanel x:Name="rowActions" Grid.Column="3" Grid.ColumnSpan="5"
                                                 Orientation="Horizontal"
                                                 HorizontalAlignment="Right"
                                                 VerticalAlignment="Stretch"
                                                 Background="{DynamicResource ListHoverBrush}"
                                                 Opacity="0">
-                                        <Button Style="{StaticResource RowActionButtonStyle}" ToolTip="Open Code"
+                                        <Button Style="{StaticResource RowActionButtonStyle}" ToolTip="{Binding Launch.ToolTip}"
                                                 Command="{Binding DataContext.OpenCodeForCommand, RelativeSource={RelativeSource AncestorType=ListView}}"
                                                 CommandParameter="{Binding Project}">
-                                            <TextBlock FontFamily="{StaticResource SymbolIconFont}" Text="&#xE8B7;" />
+                                            <TextBlock FontFamily="{StaticResource SymbolIconFont}" Text="{Binding Launch.Glyph, FallbackValue=&#xE8B7;}" />
                                         </Button>
                                         <Button Style="{StaticResource RowActionButtonStyle}" ToolTip="Open Remote (SSH)"
                                                 Command="{Binding DataContext.OpenRemoteForCommand, RelativeSource={RelativeSource AncestorType=ListView}}"
@@ -458,8 +478,14 @@
                                 </ToolTip>
                             </Button.ToolTip>
                             <StackPanel Orientation="Horizontal">
-                                <TextBlock Style="{StaticResource ButtonIconStyle}" Text="&#xE8B7;" />
-                                <AccessText Text="Open _Code" />
+                                <Grid Width="16" Height="16" Margin="0,0,8,0" VerticalAlignment="Center">
+                                    <Image Source="{Binding SelectedLaunch.Icon}" Width="16" Height="16" RenderOptions.BitmapScalingMode="HighQuality" />
+                                    <TextBlock FontFamily="{StaticResource SymbolIconFont}"
+                                               Text="{Binding SelectedLaunch.Glyph, FallbackValue=&#xE8B7;}"
+                                               VerticalAlignment="Center"
+                                               Visibility="{Binding SelectedLaunch.HasIcon, Converter={StaticResource BoolToVisNegated}, FallbackValue=Visible}" />
+                                </Grid>
+                                <AccessText Text="{Binding OpenCodeLabel}" />
                             </StackPanel>
                         </Button>
                         <Button Style="{StaticResource RailButtonStyle}" Command="{Binding OpenCodeAdminCommand}" IsEnabled="{Binding CanOpenCode}">

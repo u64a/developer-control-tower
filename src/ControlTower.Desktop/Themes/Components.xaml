@@ -280,11 +280,130 @@
         <Setter Property="Foreground" Value="{DynamicResource PrimaryTextBrush}" />
         <Setter Property="BorderBrush" Value="{DynamicResource SecondaryBorderBrush}" />
         <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="Padding" Value="2" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ContextMenu">
+                    <Border Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}"
+                            Padding="{TemplateBinding Padding}"
+                            SnapsToDevicePixels="True">
+                        <ScrollViewer CanContentScroll="True" VerticalScrollBarVisibility="Auto">
+                            <ItemsPresenter KeyboardNavigation.DirectionalNavigation="Cycle" />
+                        </ScrollViewer>
+                    </Border>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
     </Style>
+    <!-- The stock MenuItem template hard-codes a light submenu popup and
+         check/gutter colours, so submenus were white-on-white in dark mode.
+         This template draws every part from theme brushes. -->
     <Style TargetType="MenuItem">
         <Setter Property="Background" Value="Transparent" />
         <Setter Property="Foreground" Value="{DynamicResource PrimaryTextBrush}" />
         <Setter Property="Padding" Value="6,4" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="MenuItem">
+                    <Border x:Name="Bd"
+                            Background="{TemplateBinding Background}"
+                            Padding="{TemplateBinding Padding}"
+                            SnapsToDevicePixels="True">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="22" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="16" />
+                            </Grid.ColumnDefinitions>
+                            <Border x:Name="CheckBox"
+                                    Width="20" Height="20"
+                                    CornerRadius="3"
+                                    BorderThickness="1"
+                                    BorderBrush="Transparent"
+                                    Background="Transparent"
+                                    HorizontalAlignment="Center"
+                                    VerticalAlignment="Center" />
+                            <ContentPresenter x:Name="IconPresenter"
+                                              ContentSource="Icon"
+                                              MaxWidth="16" MaxHeight="16"
+                                              HorizontalAlignment="Center"
+                                              VerticalAlignment="Center" />
+                            <TextBlock x:Name="CheckGlyph"
+                                       Text="&#xE73E;"
+                                       FontFamily="{DynamicResource SymbolIconFont}"
+                                       FontSize="12"
+                                       Foreground="{DynamicResource AccentBrush}"
+                                       HorizontalAlignment="Center"
+                                       VerticalAlignment="Center"
+                                       Visibility="Collapsed" />
+                            <ContentPresenter Grid.Column="1"
+                                              ContentSource="Header"
+                                              RecognizesAccessKey="True"
+                                              Margin="6,0,12,0"
+                                              VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="2"
+                                       Text="{TemplateBinding InputGestureText}"
+                                       Foreground="{DynamicResource SecondaryTextBrush}"
+                                       Margin="0,0,8,0"
+                                       VerticalAlignment="Center" />
+                            <Path x:Name="SubmenuArrow"
+                                  Grid.Column="3"
+                                  Data="M0,0 L4,4 L0,8 Z"
+                                  Fill="{TemplateBinding Foreground}"
+                                  HorizontalAlignment="Center"
+                                  VerticalAlignment="Center"
+                                  Visibility="Collapsed" />
+                            <Popup x:Name="PART_Popup"
+                                   Placement="Right"
+                                   HorizontalOffset="4"
+                                   VerticalOffset="-7"
+                                   AllowsTransparency="True"
+                                   Focusable="False"
+                                   PopupAnimation="{DynamicResource {x:Static SystemParameters.MenuPopupAnimationKey}}"
+                                   IsOpen="{Binding IsSubmenuOpen, RelativeSource={RelativeSource TemplatedParent}}">
+                                <Border Background="{DynamicResource PaneBackgroundBrush}"
+                                        BorderBrush="{DynamicResource SecondaryBorderBrush}"
+                                        BorderThickness="1"
+                                        Padding="2"
+                                        SnapsToDevicePixels="True">
+                                    <ScrollViewer CanContentScroll="True" VerticalScrollBarVisibility="Auto">
+                                        <ItemsPresenter KeyboardNavigation.DirectionalNavigation="Cycle"
+                                                        KeyboardNavigation.TabNavigation="Cycle" />
+                                    </ScrollViewer>
+                                </Border>
+                            </Popup>
+                        </Grid>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="Role" Value="SubmenuHeader">
+                            <Setter TargetName="SubmenuArrow" Property="Visibility" Value="Visible" />
+                        </Trigger>
+                        <Trigger Property="Role" Value="TopLevelHeader">
+                            <Setter TargetName="PART_Popup" Property="Placement" Value="Bottom" />
+                            <Setter TargetName="PART_Popup" Property="HorizontalOffset" Value="0" />
+                            <Setter TargetName="PART_Popup" Property="VerticalOffset" Value="0" />
+                        </Trigger>
+                        <Trigger Property="IsChecked" Value="True">
+                            <Setter TargetName="CheckBox" Property="Background" Value="{DynamicResource AccentSubtleBrush}" />
+                            <Setter TargetName="CheckBox" Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+                        </Trigger>
+                        <MultiTrigger>
+                            <MultiTrigger.Conditions>
+                                <Condition Property="IsChecked" Value="True" />
+                                <Condition Property="Icon" Value="{x:Null}" />
+                            </MultiTrigger.Conditions>
+                            <Setter TargetName="CheckGlyph" Property="Visibility" Value="Visible" />
+                        </MultiTrigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter Property="Opacity" Value="0.55" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
         <Style.Triggers>
             <Trigger Property="IsHighlighted" Value="True">
                 <Setter Property="Background" Value="{DynamicResource AccentSubtleBrush}" />
@@ -298,6 +417,18 @@
     <Style TargetType="Separator">
         <Setter Property="Background" Value="{DynamicResource CardBorderBrush}" />
         <Setter Property="Margin" Value="0,3" />
+    </Style>
+    <Style x:Key="{x:Static MenuItem.SeparatorStyleKey}" TargetType="Separator">
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Separator">
+                    <Border Height="1"
+                            Margin="4,3"
+                            Background="{DynamicResource CardBorderBrush}"
+                            SnapsToDevicePixels="True" />
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
     </Style>
 
 </ResourceDictionary>

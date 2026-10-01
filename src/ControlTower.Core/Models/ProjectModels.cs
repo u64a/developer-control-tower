@@ -95,6 +95,9 @@ namespace ControlTower.Core.Models
         public string GitHub { get; set; }
 
         public string Ado { get; set; }
+
+        /// <summary>Launch environment id (see <see cref="LaunchEnvironmentCatalog"/>). Empty = global default.</summary>
+        public string Environment { get; set; } = string.Empty;
     }
 
     public sealed class DocLink
@@ -191,6 +194,13 @@ namespace ControlTower.Core.Models
 
         /// <summary>Optional organisational folder. Empty = ungrouped.</summary>
         public string Group { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Launch environment id. <c>null</c> preserves the existing value on
+        /// overwrite, empty clears it (global default), otherwise it must be a
+        /// valid environment id.
+        /// </summary>
+        public string LaunchEnvironment { get; set; }
 
         /// <summary>
         /// Neutral remote URL slot used by the scan-and-register flow.

@@ -101,6 +101,7 @@ namespace ControlTower.Desktop
 
             var previousSelection = _viewModel?.SelectedProject?.Id;
             _viewModel = new MainViewModel(_controlTowerService, null, _updateService, _updateOptions);
+            _viewModel.LaunchEnvironments = session.LaunchEnvironments;
             _viewModel.PendingSelectionId = previousSelection;
             DataContext = _viewModel;
             RefreshProfileMenu();
@@ -391,7 +392,8 @@ namespace ControlTower.Desktop
                 updateService: _updateService,
                 updateOptions: _updateOptions,
                 uninstallService: _root.UninstallService,
-                legacyInstallRoot: _root.LegacyInstallRoot);
+                legacyInstallRoot: _root.LegacyInstallRoot,
+                launchEnvironments: _session.LaunchEnvironments);
             dialog.Owner = this;
 
             var result = dialog.ShowDialog();
@@ -408,7 +410,7 @@ namespace ControlTower.Desktop
             if (result == true && dialog.Saved)
             {
                 var writer = new SettingsWriter();
-                writer.Write(_settingsPath, dialog.ResultStores, dialog.ResultLibraryPath, dialog.ResultUpdateOptions);
+                writer.Write(_settingsPath, dialog.ResultStores, dialog.ResultLibraryPath, dialog.ResultUpdateOptions, dialog.ResultDefaultLaunchEnvironment);
 
                 if (dialog.UpdateLaunched)
                 {
@@ -758,6 +760,8 @@ namespace ControlTower.Desktop
             if (project == null) return;
 
             menu.Items.Clear();
+            AddLaunchEnvironmentMenus(menu, project);
+
             var header = new System.Windows.Controls.MenuItem { Header = "Move to group", IsEnabled = false };
             menu.Items.Add(header);
             menu.Items.Add(new System.Windows.Controls.Separator());
@@ -792,6 +796,64 @@ namespace ControlTower.Desktop
                 }
             };
             menu.Items.Add(newGroup);
+        }
+
+        private void AddLaunchEnvironmentMenus(System.Windows.Controls.ContextMenu menu, ProjectOverview project)
+        {
+            var catalog = _viewModel.LaunchEnvironments;
+            var current = _viewModel.ResolveLaunch(project);
+            var usesDefault = string.IsNullOrWhiteSpace(project.LaunchEnvironment) || catalog.IsUnknown(project.LaunchEnvironment);
+
+            var openWith = new System.Windows.Controls.MenuItem { Header = "Open with" };
+            var setDefault = new System.Windows.Controls.MenuItem { Header = "Launch environment" };
+
+            var defaultItem = new System.Windows.Controls.MenuItem
+            {
+                Header = "Default (" + catalog.Default.DisplayName + ")",
+                IsChecked = usesDefault
+            };
+            defaultItem.Click += (_, _) => _viewModel.SetProjectLaunchEnvironment(project, string.Empty);
+            setDefault.Items.Add(defaultItem);
+            setDefault.Items.Add(new System.Windows.Controls.Separator());
+
+            foreach (var environment in catalog.Environments)
+            {
+                var id = environment.Id;
+                var display = new ViewModels.LaunchEnvironmentDisplay(environment, ViewModels.LaunchEnvironmentIconCache.Get(environment), false);
+
+                var launchItem = new System.Windows.Controls.MenuItem
+                {
+                    Header = environment.DisplayName,
+                    Icon = BuildEnvironmentIcon(display),
+                    FontWeight = current != null && current.Id == id ? FontWeights.SemiBold : FontWeights.Normal
+                };
+                launchItem.Click += (_, _) => _viewModel.LaunchWith(project, id);
+                openWith.Items.Add(launchItem);
+
+                var chooseItem = new System.Windows.Controls.MenuItem
+                {
+                    Header = environment.DisplayName,
+                    IsChecked = !usesDefault && string.Equals(project.LaunchEnvironment, id, System.StringComparison.OrdinalIgnoreCase)
+                };
+                chooseItem.Click += (_, _) => _viewModel.SetProjectLaunchEnvironment(project, id);
+                setDefault.Items.Add(chooseItem);
+            }
+
+            menu.Items.Add(openWith);
+            menu.Items.Add(setDefault);
+            menu.Items.Add(new System.Windows.Controls.Separator());
+        }
+
+        private static FrameworkElement BuildEnvironmentIcon(ViewModels.LaunchEnvironmentDisplay display)
+        {
+            if (display.HasIcon)
+            {
+                return new System.Windows.Controls.Image { Source = display.Icon, Width = 16, Height = 16 };
+            }
+
+            var glyph = new System.Windows.Controls.TextBlock { Text = display.Glyph, FontSize = 14 };
+            glyph.SetResourceReference(System.Windows.Controls.TextBlock.FontFamilyProperty, "SymbolIconFont");
+            return glyph;
         }
 
         private void LibraryClick(object sender, RoutedEventArgs e)

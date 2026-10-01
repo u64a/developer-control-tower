@@ -6,8 +6,27 @@ tooling:
   git_command: git
   ssh_command: ssh
   ssh_config_path:
+  # Optional; auto-detected (wt.exe / pwsh.exe) when empty.
+  terminal_command:
+  powershell_command:
 
 security:
   allow_http_links: false
   github_credential_target: DCT-GitHub
   ado_credential_target: DCT-Ado
+
+# How projects open. Built-ins: vscode (default), copilot-cli, claude-code.
+# Override per project with the row's right-click "Launch environment" menu
+# (stored as launch.environment in the project's project.yml).
+launch:
+  default_environment: vscode
+  # environments:
+  #   claude-code:
+  #     args: --continue
+  #   aider:
+  #     name: Aider
+  #     type: terminal          # terminal (PowerShell in Windows Terminal) or editor (VS Code-style)
+  #     command: aider
+  #     args: --dark-mode
+  #     remote_command: aider   # run on the host for SSH-only projects
+  #     icon: C:\Tools\aider.ico  # optional; otherwise read from the installed executable

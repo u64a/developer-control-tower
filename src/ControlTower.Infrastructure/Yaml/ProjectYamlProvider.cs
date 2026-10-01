@@ -137,6 +137,14 @@ namespace ControlTower.Infrastructure.Yaml
                     {
                         project.Launch.Ado = dto.Launch.Ado;
                     }
+
+                    // Only well-formed ids are kept; unknown-but-valid ids are
+                    // resolved (to the default) at launch time.
+                    var environmentId = LaunchEnvironmentCatalog.Normalize(dto.Launch.Environment);
+                    if (LaunchEnvironmentCatalog.IsValidId(environmentId))
+                    {
+                        project.Launch.Environment = environmentId;
+                    }
                 }
 
                 if (dto.Docs != null)

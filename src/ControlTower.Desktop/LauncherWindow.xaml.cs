@@ -148,6 +148,14 @@ namespace ControlTower.Desktop
                 preferRemote = !preferRemote;
             }
 
+            // Non-VS Code environments handle local vs SSH themselves, so Enter
+            // always goes through the project's environment; Shift still opens
+            // VS Code Remote-SSH when available.
+            if (!invert && vm.PrefersEnvironmentLaunch(vm.SelectedProject))
+            {
+                preferRemote = false;
+            }
+
             var command = (preferRemote && vm.CanOpenRemote)
                 ? (System.Windows.Input.ICommand)vm.OpenRemoteCommand
                 : vm.OpenCodeCommand;

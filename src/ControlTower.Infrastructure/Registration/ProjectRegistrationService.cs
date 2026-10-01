@@ -70,6 +70,16 @@ namespace ControlTower.Infrastructure.Registration
                 };
             }
 
+            if (!string.IsNullOrWhiteSpace(request.LaunchEnvironment) &&
+                !LaunchEnvironmentCatalog.IsValidId(LaunchEnvironmentCatalog.Normalize(request.LaunchEnvironment)))
+            {
+                return new ProjectRegistrationResult
+                {
+                    Success = false,
+                    Message = "Launch environment id is invalid (use lower-case letters, digits and hyphens)."
+                };
+            }
+
             var projectId = string.IsNullOrWhiteSpace(request.ProjectId)
                 ? BuildProjectId(request.DisplayName)
                 : request.ProjectId.Trim();
@@ -399,6 +409,13 @@ namespace ControlTower.Infrastructure.Registration
             lines.Add("  vscode_ssh: " + EscapeScalar(BuildVsCodeSsh(request.SshTarget)));
             lines.Add("  github: " + EscapeScalar(request.GitHubUrl));
             lines.Add("  ado: " + EscapeScalar(request.AdoUrl));
+            var launchEnvironment = request.LaunchEnvironment == null
+                ? existingProject?.Launch?.Environment
+                : LaunchEnvironmentCatalog.Normalize(request.LaunchEnvironment);
+            if (!string.IsNullOrWhiteSpace(launchEnvironment))
+            {
+                lines.Add("  environment: " + EscapeScalar(launchEnvironment));
+            }
             lines.Add(string.Empty);
             AppendDocs(lines, existingProject);
             AppendExternalRefs(lines, existingProject);

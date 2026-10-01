@@ -43,7 +43,10 @@ namespace ControlTower.Infrastructure.Launch
             {
                 if (targetKind == LaunchTargetKind.Code)
                 {
-                    return LaunchLocalCode(project);
+                    var environment = ResolveEnvironment(project);
+                    return environment.Kind == LaunchEnvironmentKind.Terminal
+                        ? LaunchTerminal(project, environment)
+                        : LaunchLocalCode(project, environment);
                 }
 
                 if (targetKind == LaunchTargetKind.CodeAdmin)
@@ -108,7 +111,32 @@ namespace ControlTower.Infrastructure.Launch
             }
         }
 
-        private LaunchResult LaunchLocalCode(ProjectDefinition project)
+        private LaunchEnvironment ResolveEnvironment(ProjectDefinition project)
+        {
+            var catalog = _settings.LaunchEnvironments ?? LaunchEnvironmentCatalog.CreateDefault(_settings.VsCodeCommand);
+            return catalog.Resolve(project.Launch?.Environment);
+        }
+
+        /// <summary>
+        /// The built-in VS Code environment always uses <c>tooling.vscode_command</c>
+        /// so the editor path, admin launch and Remote-SSH stay consistent.
+        /// </summary>
+        private string EditorCommand(LaunchEnvironment environment)
+        {
+            return environment == null || environment.Id == LaunchEnvironmentCatalog.VsCodeId
+                ? _settings.VsCodeCommand
+                : environment.Command;
+        }
+
+        private static string EditorArguments(LaunchEnvironment environment, string target)
+        {
+            var extra = environment == null || string.IsNullOrWhiteSpace(environment.Arguments)
+                ? string.Empty
+                : environment.Arguments.Trim() + " ";
+            return "--new-window " + extra + target;
+        }
+
+        private LaunchResult LaunchLocalCode(ProjectDefinition project, LaunchEnvironment environment = null)
         {
             var path = !string.IsNullOrWhiteSpace(project.Launch.VsCodeLocal)
                 ? project.Launch.VsCodeLocal
@@ -117,8 +145,8 @@ namespace ControlTower.Infrastructure.Launch
             if (!string.IsNullOrWhiteSpace(path) && Directory.Exists(path))
             {
                 return StartProcess(
-                    _settings.VsCodeCommand,
-                    "--new-window \"" + EscapeQuotes(path) + "\"",
+                    EditorCommand(environment),
+                    EditorArguments(environment, "\"" + EscapeQuotes(path) + "\""),
                     path,
                     true,
                     "Opened code workspace");
@@ -126,20 +154,172 @@ namespace ControlTower.Infrastructure.Launch
 
             if (project.Locations != null && !string.IsNullOrWhiteSpace(project.Locations.SshTarget))
             {
-                return LaunchRemoteCode(project);
+                return LaunchRemoteCode(project, environment);
             }
 
             if (!string.IsNullOrWhiteSpace(project.ProjectRootPath) && Directory.Exists(project.ProjectRootPath))
             {
                 return StartProcess(
-                    _settings.VsCodeCommand,
-                    "--new-window \"" + EscapeQuotes(project.ProjectRootPath) + "\"",
+                    EditorCommand(environment),
+                    EditorArguments(environment, "\"" + EscapeQuotes(project.ProjectRootPath) + "\""),
                     project.ProjectRootPath,
                     true,
                     "Opened project workspace");
             }
 
             return LaunchResult.Unconfigured("Code path is not available");
+        }
+
+        /// <summary>
+        /// Opens a terminal launch environment: PowerShell (inside Windows
+        /// Terminal when available) in the project folder running the
+        /// environment's command, or — for SSH-only projects — ssh to the
+        /// host, cd to the remote path and run the remote command.
+        /// </summary>
+        private LaunchResult LaunchTerminal(ProjectDefinition project, LaunchEnvironment environment)
+        {
+            var path = !string.IsNullOrWhiteSpace(project.Launch.VsCodeLocal)
+                ? project.Launch.VsCodeLocal
+                : project.Locations?.LocalPath;
+
+            if (string.IsNullOrWhiteSpace(path) || !Directory.Exists(path))
+            {
+                path = null;
+                var hasSsh = project.Locations != null && !string.IsNullOrWhiteSpace(project.Locations.SshTarget);
+                if (hasSsh || !string.IsNullOrWhiteSpace(project.Launch.VsCodeSsh))
+                {
+                    return LaunchRemoteTerminal(project, environment);
+                }
+
+                if (!string.IsNullOrWhiteSpace(project.ProjectRootPath) && Directory.Exists(project.ProjectRootPath))
+                {
+                    path = project.ProjectRootPath;
+                }
+            }
+
+            if (path == null)
+            {
+                return LaunchResult.Unconfigured("Code path is not available");
+            }
+
+            var script = "Set-Location -LiteralPath " + PsQuote(path) + "; & " + PsQuote(environment.Command) +
+                         (string.IsNullOrWhiteSpace(environment.Arguments) ? string.Empty : " " + environment.Arguments.Trim());
+            return StartTerminal(environment, project, script, path, "Opened " + environment.DisplayName);
+        }
+
+        private LaunchResult LaunchRemoteTerminal(ProjectDefinition project, LaunchEnvironment environment)
+        {
+            if (!TryResolveRemoteTarget(project, out var host, out var remotePath))
+            {
+                return LaunchResult.Unconfigured("Remote SSH target is not configured");
+            }
+
+            var windowsPath = remotePath.Length >= 2 && char.IsLetter(remotePath[0]) && remotePath[1] == ':';
+            if (!IsSafeHost(host) || !IsShellNeutralRemotePath(remotePath))
+            {
+                return LaunchResult.Rejected(
+                    "launch/rejected/remote-target",
+                    "Remote SSH target is not valid.");
+            }
+
+            string remoteLine;
+            if (!string.IsNullOrWhiteSpace(environment.RemoteCommand))
+            {
+                remoteLine = windowsPath
+                    ? "cd /d " + remotePath + " && " + environment.RemoteCommand.Trim()
+                    : "cd '" + remotePath + "' && " + environment.RemoteCommand.Trim();
+            }
+            else if (!IsBareCommandName(environment.Command))
+            {
+                return LaunchResult.Unconfigured(
+                    $"{environment.DisplayName} has no remote_command for SSH projects");
+            }
+            else if (windowsPath)
+            {
+                remoteLine = "powershell.exe -NoLogo -NoProfile -EncodedCommand " +
+                             Convert.ToBase64String(System.Text.Encoding.Unicode.GetBytes(
+                                 BuildWindowsRemoteScript(remotePath, environment)));
+            }
+            else
+            {
+                remoteLine = "cd '" + remotePath + "' && " + environment.Command.Trim() +
+                             (string.IsNullOrWhiteSpace(environment.Arguments) ? string.Empty : " " + environment.Arguments.Trim());
+            }
+
+            var ssh = string.IsNullOrWhiteSpace(_settings.SshCommand) ? "ssh" : _settings.SshCommand.Trim().Trim('"');
+            var configArg = string.IsNullOrWhiteSpace(_settings.SshConfigPath)
+                ? string.Empty
+                : " -F " + PsQuote(_settings.SshConfigPath);
+            var script = "& " + PsQuote(ssh) + configArg + " -t " + PsQuote(host) + " " + PsQuote(remoteLine);
+            return StartTerminal(environment, project, script, null, "Opened " + environment.DisplayName + " over SSH");
+        }
+
+        private LaunchResult StartTerminal(LaunchEnvironment environment, ProjectDefinition project, string script, string workingDirectory, string successMessage)
+        {
+            var powershell = string.IsNullOrWhiteSpace(_settings.PowerShellCommand)
+                ? "powershell.exe"
+                : _settings.PowerShellCommand.Trim().Trim('"');
+            var encoded = Convert.ToBase64String(System.Text.Encoding.Unicode.GetBytes(script));
+            var powershellArgs = "-NoLogo -NoExit -EncodedCommand " + encoded;
+
+            var startInfo = new ProcessStartInfo { UseShellExecute = true };
+            var terminal = (_settings.TerminalCommand ?? string.Empty).Trim().Trim('"');
+            if (terminal.Length > 0)
+            {
+                var title = SanitizeTitle((project.DisplayName ?? project.Id ?? "Project") + " - " + environment.DisplayName);
+                startInfo.FileName = terminal;
+                startInfo.Arguments = "-w new new-tab --title \"" + title + "\" --suppressApplicationTitle \"" +
+                                      powershell + "\" " + powershellArgs;
+            }
+            else
+            {
+                startInfo.FileName = powershell;
+                startInfo.Arguments = powershellArgs;
+            }
+
+            if (!string.IsNullOrWhiteSpace(workingDirectory) && Directory.Exists(workingDirectory))
+            {
+                startInfo.WorkingDirectory = workingDirectory;
+            }
+
+            _processStarter(startInfo);
+            return LaunchResult.Ok(successMessage);
+        }
+
+        /// <summary>PowerShell single-quoted literal: no expansion; embedded quotes doubled.</summary>
+        private static string PsQuote(string value)
+        {
+            return "'" + (value ?? string.Empty).Replace("'", "''") + "'";
+        }
+
+        /// <summary>
+        /// Remote script for Windows SSH hosts. Microsoft Store app execution
+        /// aliases (<c>%LOCALAPPDATA%\Microsoft\WindowsApps\*.exe</c>) fail with
+        /// "Access is denied" inside an SSH session, and they are often first on
+        /// PATH (e.g. GitHub Copilot CLI), so resolve the first real executable.
+        /// </summary>
+        private static string BuildWindowsRemoteScript(string remotePath, LaunchEnvironment environment)
+        {
+            var name = environment.Command.Trim();
+            var args = string.IsNullOrWhiteSpace(environment.Arguments) ? string.Empty : " " + environment.Arguments.Trim();
+            return "Set-Location -LiteralPath " + PsQuote(remotePath) + "\n" +
+                   "$c = Get-Command -Name " + PsQuote(name) + " -CommandType Application -All -ErrorAction SilentlyContinue |" +
+                   " Where-Object { $_.Source -notlike '*\\WindowsApps\\*' } | Select-Object -First 1\n" +
+                   "if (-not $c) { Write-Host " + PsQuote("'" + name + "' was not found on this host (Microsoft Store app aliases cannot run over SSH).") +
+                   " -ForegroundColor Red; exit 1 }\n" +
+                   "& $c.Source" + args + "\n" +
+                   "exit $LASTEXITCODE";
+        }
+
+        private static bool IsBareCommandName(string command)
+        {
+            return !string.IsNullOrWhiteSpace(command) && Regex.IsMatch(command.Trim(), "^[A-Za-z0-9._-]+$");
+        }
+
+        private static string SanitizeTitle(string value)
+        {
+            var cleaned = Regex.Replace(value ?? string.Empty, "[^A-Za-z0-9 ._()-]", string.Empty).Trim();
+            return cleaned.Length == 0 ? "Developer Control Tower" : cleaned;
         }
 
         private LaunchResult LaunchLocalCodeAsAdmin(ProjectDefinition project)
@@ -380,7 +560,7 @@ namespace ControlTower.Infrastructure.Launch
             return false;
         }
 
-        private LaunchResult LaunchRemoteCode(ProjectDefinition project)
+        private LaunchResult LaunchRemoteCode(ProjectDefinition project, LaunchEnvironment environment = null)
         {
             string host;
             string remotePath;
@@ -397,8 +577,8 @@ namespace ControlTower.Infrastructure.Launch
             }
 
             return StartProcess(
-                _settings.VsCodeCommand,
-                "--new-window --folder-uri \"" + BuildRemoteFolderUri(host, remotePath) + "\"",
+                EditorCommand(environment),
+                EditorArguments(environment, "--folder-uri \"" + BuildRemoteFolderUri(host, remotePath) + "\""),
                 ResolveProjectRoot(project),
                 true,
                 "Opened remote SSH workspace");
@@ -515,6 +695,29 @@ namespace ControlTower.Infrastructure.Launch
         {
             return !string.IsNullOrWhiteSpace(host) &&
                    Regex.IsMatch(host, @"^[A-Za-z0-9._@-]+$");
+        }
+
+        /// <summary>
+        /// The remote default shell (cmd, PowerShell, sh) is unknown, so remote
+        /// paths spliced into an SSH command line are allow-listed to characters
+        /// that are inert in all of them.
+        /// </summary>
+        private static bool IsShellNeutralRemotePath(string remotePath)
+        {
+            if (string.IsNullOrWhiteSpace(remotePath))
+            {
+                return false;
+            }
+
+            foreach (var ch in remotePath)
+            {
+                if (!char.IsLetterOrDigit(ch) && " _.-:/\\+".IndexOf(ch) < 0)
+                {
+                    return false;
+                }
+            }
+
+            return true;
         }
 
         private static bool IsSafeRemotePath(string remotePath)
