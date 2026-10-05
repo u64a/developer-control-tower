@@ -171,6 +171,9 @@ namespace ControlTower.Core.Models
         /// <summary>Project's configured launch environment id (empty = global default).</summary>
         public string LaunchEnvironment { get; set; } = string.Empty;
 
+        /// <summary>Project's Copilot CLI autostart options.</summary>
+        public CopilotAutostart CopilotAutostart { get; set; } = new CopilotAutostart();
+
         public string PrimaryDocPath { get; set; }
 
         public string PlanningPath { get; set; }

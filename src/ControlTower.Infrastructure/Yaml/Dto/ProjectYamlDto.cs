@@ -79,6 +79,30 @@ namespace ControlTower.Infrastructure.Yaml.Dto
 
         [YamlMember(Alias = "environment")]
         public string Environment { get; set; }
+
+        [YamlMember(Alias = "copilot_autostart")]
+        public CopilotAutostartDto CopilotAutostart { get; set; }
+    }
+
+    public sealed class CopilotAutostartDto
+    {
+        [YamlMember(Alias = "enabled")]
+        public bool Enabled { get; set; }
+
+        [YamlMember(Alias = "session_mode")]
+        public string SessionMode { get; set; }
+
+        [YamlMember(Alias = "session_name")]
+        public string SessionName { get; set; }
+
+        [YamlMember(Alias = "agent")]
+        public string Agent { get; set; }
+
+        [YamlMember(Alias = "yolo")]
+        public bool Yolo { get; set; }
+
+        [YamlMember(Alias = "integrated_terminal")]
+        public bool IntegratedTerminal { get; set; }
     }
 
     public sealed class DocLinkDto

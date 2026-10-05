@@ -16,6 +16,7 @@
         Foreground="{DynamicResource PrimaryTextBrush}"
         TextOptions.TextFormattingMode="Display">
     <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVis" />
         <CollectionViewSource x:Key="GroupedProjects" Source="{Binding Projects}">
             <CollectionViewSource.GroupDescriptions>
                 <PropertyGroupDescription PropertyName="Project.Group" />
@@ -509,6 +510,73 @@
                                 <AccessText Text="Re_fresh project" />
                             </StackPanel>
                         </Button>
+
+                        <StackPanel Visibility="{Binding CopilotSectionVisible, Converter={StaticResource BoolToVis}}">
+                        <Separator Margin="0,10,0,8" Opacity="0.35" />
+
+                        <CheckBox IsChecked="{Binding CopilotAutostartEnabled, Mode=TwoWay}"
+                                  IsEnabled="{Binding CanConfigureCopilot}"
+                                  Content="Start Copilot CLI with this project"
+                                  AutomationProperties.Name="Start Copilot CLI with this project"
+                                  ToolTip="Saved per project. Opens a Copilot CLI session in the project folder when you launch it."
+                                  Margin="0,0,0,2" />
+
+                        <TextBlock Text="{Binding CopilotHint}"
+                                   Visibility="{Binding CopilotOptionsEnabled, Converter={StaticResource BoolToVis}}"
+                                   Foreground="{DynamicResource SecondaryTextBrush}"
+                                   FontSize="11"
+                                   TextWrapping="Wrap"
+                                   Margin="22,0,0,6" />
+
+                        <StackPanel Margin="22,0,0,0"
+                                    IsEnabled="{Binding CopilotOptionsEnabled}"
+                                    Visibility="{Binding CopilotOptionsEnabled, Converter={StaticResource BoolToVis}}">
+                            <TextBlock Text="Session" Style="{StaticResource CaptionTextStyle}" />
+                            <ComboBox SelectedIndex="{Binding CopilotSessionModeIndex, Mode=TwoWay}"
+                                      AutomationProperties.Name="Copilot session mode"
+                                      Margin="0,2,0,6">
+                                <ComboBoxItem Content="Resume previous session" />
+                                <ComboBoxItem Content="New named session" />
+                            </ComboBox>
+                            <TextBox Text="{Binding CopilotSessionName, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
+                                     Visibility="{Binding CopilotSessionNameVisible, Converter={StaticResource BoolToVis}}"
+                                     AutomationProperties.Name="Copilot session name"
+                                     ToolTip="Letters, numbers, dot, underscore and hyphen only."
+                                     Margin="0,0,0,6" />
+
+                            <TextBlock Text="Agent" Style="{StaticResource CaptionTextStyle}" />
+                            <ComboBox SelectedIndex="{Binding CopilotAgentModeIndex, Mode=TwoWay}"
+                                      AutomationProperties.Name="Copilot agent"
+                                      Margin="0,2,0,6">
+                                <ComboBoxItem Content="None" />
+                                <ComboBoxItem Content="Use a custom agent" />
+                            </ComboBox>
+                            <TextBox Text="{Binding CopilotAgentName, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
+                                     Visibility="{Binding CopilotAgentNameVisible, Converter={StaticResource BoolToVis}}"
+                                     AutomationProperties.Name="Copilot agent name"
+                                     ToolTip="Letters, numbers, dot, underscore and hyphen only."
+                                     Margin="0,0,0,6" />
+
+                            <CheckBox IsChecked="{Binding CopilotIntegratedTerminal, Mode=TwoWay}"
+                                      Visibility="{Binding CopilotIntegratedTerminalVisible, Converter={StaticResource BoolToVis}}"
+                                      Content="Run in VS Code's terminal instead of a separate window"
+                                      AutomationProperties.Name="Run Copilot in the VS Code terminal"
+                                      ToolTip="Writes a .vscode/tasks.json task that VS Code runs when it opens the folder, and keeps it out of git. Only runs when the folder opens in a new window."
+                                      Margin="0,0,0,6" />
+
+                            <CheckBox IsChecked="{Binding CopilotYolo, Mode=TwoWay}"
+                                      Content="--yolo (allow all tools, paths and URLs)"
+                                      AutomationProperties.Name="Copilot yolo mode"
+                                      ToolTip="Runs Copilot CLI without per-action confirmation prompts."
+                                      Margin="0,0,0,6" />
+
+                            <TextBlock Text="{Binding CopilotCommandPreview}"
+                                       FontFamily="{StaticResource MonoFontFamily}"
+                                       FontSize="11"
+                                       TextWrapping="Wrap"
+                                       Foreground="{DynamicResource SecondaryTextBrush}" />
+                        </StackPanel>
+                        </StackPanel>
                     </StackPanel>
                 </Border>
 

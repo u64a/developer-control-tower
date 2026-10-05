@@ -43,6 +43,9 @@ namespace ControlTower.Desktop.ViewModels
         public string ToolTip { get; }
 
         public bool IsTerminal => Environment.Kind == LaunchEnvironmentKind.Terminal;
+
+        /// <summary>False for agent CLIs other than Copilot, which take different options.</summary>
+        public bool SupportsCopilotAutostart => Environment.SupportsCopilotAutostart;
     }
 
     /// <summary>

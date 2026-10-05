@@ -57,6 +57,71 @@ icon appears when a tool isn't installed.
 
 ![Settings dialog showing the default launch environment selector](docs/images/settings-launch-environment.png)
 
+## Copilot CLI autostart
+
+A project can start a Copilot CLI session as part of its launch, so you don't
+have to open a terminal and retype the same command each time. Select the
+project and use the **LAUNCH** card:
+
+| Option    | Choices                                            | Flag             |
+| --------- | -------------------------------------------------- | ---------------- |
+| Autostart | Off by default; turning it on reveals the rest.     | —                |
+| Session   | Resume previous session (default), or a named one.  | `--resume`, `--name` |
+| Agent     | None (default), or a custom agent name.             | `--agent`        |
+| VS Code terminal | Off by default; see below.                  | —                |
+| `--yolo`  | Off by default.                                     | `--yolo`         |
+
+The options are saved per project in that project's `project.yml`, so they
+apply again the next time you launch it. A project that has never been
+configured starts nothing, exactly as before.
+
+Where the session appears depends on the launch environment:
+
+- **GitHub Copilot CLI** — the flags are added to the session that already
+  opens, so nothing extra is launched.
+- **VS Code (or any editor environment)** — VS Code has no command line that
+  opens its integrated terminal and runs a command, so Copilot CLI opens in a
+  terminal beside the editor, in the same folder. If the editor opens but
+  Copilot CLI cannot start, the editor launch still succeeds and the status
+  line says why.
+- **Another agent's CLI, such as Claude Code** — the options are hidden
+  entirely. Those tools take different options, so there is nothing for
+  Copilot autostart to do.
+- **SSH projects launched into an editor** — no session starts, because
+  Copilot CLI would run on this machine rather than the remote host.
+
+### Running inside VS Code's terminal
+
+VS Code has no command line that runs a command in its integrated terminal.
+The only supported mechanism is a task that VS Code runs when it opens a
+folder, so **Run in VS Code's terminal** generates one:
+
+- `.vscode/tasks.json` is written before the editor starts, with a single
+  `Developer Control Tower: Copilot CLI` task using `runOn: folderOpen`.
+- An existing `tasks.json` is merged — only the tool's own label is replaced,
+  and a file that cannot be parsed is left untouched and reported.
+- The file is added to `.git/info/exclude`, so it never reaches a commit and
+  no tracked `.gitignore` is modified.
+- Clearing the checkbox removes the generated task again.
+
+Two limits come from VS Code itself. The task runs only when the folder opens
+in a **new** window, so an already-open project just gets focus and no
+session. And the first automatic task of any kind needs permission, which VS
+Code records as `"task.allowAutomaticTasks": "on"` in your **user** settings —
+a global switch, so from then on any folder with such a task runs it without
+asking. Set it to `"auto"` if you would rather be asked per folder.
+
+**Open Code RunAs Admin** starts the Copilot session too. The editor is
+elevated but the Copilot terminal is not, because the CLI never needs
+Administrator. If Developer Control Tower is itself already running elevated,
+Windows raises no prompt and VS Code opens as a new window inside the elevated
+instance you already have, which is easy to miss among existing windows.
+
+Session and agent names are limited to letters, numbers, dot, underscore and
+hyphen. Anything else is refused rather than placed on a command line, and a
+hand-edited `project.yml` containing an unsupported name loads with a warning
+and ignores that name.
+
 ## Install
 
 Download the Setup file for your architecture from

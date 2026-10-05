@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
@@ -44,14 +45,37 @@ namespace ControlTower.Infrastructure.Launch
                 if (targetKind == LaunchTargetKind.Code)
                 {
                     var environment = ResolveEnvironment(project);
-                    return environment.Kind == LaunchEnvironmentKind.Terminal
-                        ? LaunchTerminal(project, environment)
-                        : LaunchLocalCode(project, environment);
+                    if (environment.Kind == LaunchEnvironmentKind.Terminal)
+                    {
+                        return LaunchTerminal(project, environment);
+                    }
+
+                    // The task file has to exist before the folder opens, so
+                    // prepare it ahead of starting the editor.
+                    var integrated = PrepareIntegratedCopilot(project, out var integratedNote);
+                    var editorResult = LaunchLocalCode(project, environment);
+                    if (!editorResult.Success)
+                    {
+                        return editorResult;
+                    }
+
+                    return integrated
+                        ? LaunchResult.Ok(editorResult.Message + integratedNote)
+                        : StartCompanionCopilot(project, editorResult);
                 }
 
                 if (targetKind == LaunchTargetKind.CodeAdmin)
                 {
-                    return LaunchLocalCodeAsAdmin(project);
+                    var integratedAdmin = PrepareIntegratedCopilot(project, out var adminNote);
+                    var adminResult = LaunchLocalCodeAsAdmin(project);
+                    if (!adminResult.Success)
+                    {
+                        return adminResult;
+                    }
+
+                    return integratedAdmin
+                        ? LaunchResult.Ok(adminResult.Message + adminNote)
+                        : StartCompanionCopilot(project, adminResult);
                 }
 
                 if (targetKind == LaunchTargetKind.RemoteCode)
@@ -115,6 +139,167 @@ namespace ControlTower.Infrastructure.Launch
         {
             var catalog = _settings.LaunchEnvironments ?? LaunchEnvironmentCatalog.CreateDefault(_settings.VsCodeCommand);
             return catalog.Resolve(project.Launch?.Environment);
+        }
+
+        /// <summary>The environment Copilot CLI autostart runs as, honouring a user override of the built-in.</summary>
+        private LaunchEnvironment CopilotEnvironment()
+        {
+            var catalog = _settings.LaunchEnvironments ?? LaunchEnvironmentCatalog.CreateDefault(_settings.VsCodeCommand);
+            return catalog.Find(LaunchEnvironmentCatalog.CopilotCliId) ?? new LaunchEnvironment(
+                LaunchEnvironmentCatalog.CopilotCliId,
+                "GitHub Copilot CLI",
+                LaunchEnvironmentKind.Terminal,
+                "copilot",
+                isBuiltIn: true);
+        }
+
+        private static bool IsCopilotEnvironment(LaunchEnvironment environment)
+        {
+            return environment != null && environment.IsCopilotCli;
+        }
+
+        /// <summary>
+        /// Autostart tokens for a Copilot CLI environment, or null when the
+        /// project has not opted in. Returns false with a rejection when the
+        /// configured options cannot be turned into a command line.
+        /// </summary>
+        private static bool TryResolveAutostart(ProjectDefinition project, LaunchEnvironment environment, out IReadOnlyList<string> tokens, out LaunchResult rejection)
+        {
+            tokens = null;
+            rejection = null;
+
+            var autostart = project.Launch?.CopilotAutostart;
+            if (autostart == null || !autostart.Enabled || !IsCopilotEnvironment(environment))
+            {
+                return true;
+            }
+
+            if (!autostart.TryBuildArguments(out var built, out var error))
+            {
+                rejection = LaunchResult.Rejected("launch/rejected/copilot-autostart", error);
+                return false;
+            }
+
+            tokens = built;
+            return true;
+        }
+
+        /// <summary>
+        /// VS Code has no command line that opens its integrated terminal and
+        /// runs a command, so an editor launch with Copilot autostart opens a
+        /// terminal beside the editor in the same folder. A failure here never
+        /// turns the successful editor launch into a failed one.
+        /// </summary>
+        /// <summary>
+        /// Writes the VS Code task that runs Copilot CLI in the integrated
+        /// terminal, when the project asks for it. Returns true when the
+        /// integrated route owns this launch, so no terminal opens beside the
+        /// editor. When the project does not ask for it, any task this tool
+        /// wrote earlier is removed so a cleared checkbox stops taking effect.
+        /// </summary>
+        private bool PrepareIntegratedCopilot(ProjectDefinition project, out string note)
+        {
+            note = string.Empty;
+
+            var autostart = project.Launch?.CopilotAutostart;
+            var path = ResolveLocalCodePath(project);
+            if (path == null)
+            {
+                return false;
+            }
+
+            if (autostart == null || !autostart.Enabled || !autostart.UseIntegratedTerminal)
+            {
+                VsCodeTaskFile.Remove(path);
+                return false;
+            }
+
+            if (!autostart.TryBuildArguments(out var tokens, out var error))
+            {
+                note = ". Copilot CLI not started: " + error;
+                return true;
+            }
+
+            var environment = CopilotEnvironment();
+            var written = VsCodeTaskFile.Write(path, environment.Command, tokens, true);
+            note = written.Success
+                ? " and queued " + autostart.Describe(environment.Command) + " in its terminal"
+                : ". Copilot CLI not started: " + written.Error;
+            return true;
+        }
+
+        private LaunchResult StartCompanionCopilot(ProjectDefinition project, LaunchResult editorResult)
+        {
+            var autostart = project.Launch?.CopilotAutostart;
+            if (autostart == null || !autostart.Enabled)
+            {
+                return editorResult;
+            }
+
+            // Copilot CLI runs on this machine, so it can only follow a
+            // workspace that exists locally (an SSH project opens remotely).
+            var path = ResolveLocalCodePath(project);
+            if (path == null)
+            {
+                return editorResult;
+            }
+
+            if (!autostart.TryBuildArguments(out var tokens, out var error))
+            {
+                return LaunchResult.Ok(editorResult.Message + ". Copilot CLI not started: " + error);
+            }
+
+            var environment = CopilotEnvironment();
+            try
+            {
+                StartTerminal(environment, project, BuildLocalTerminalScript(path, environment, tokens), path, string.Empty);
+            }
+            catch (Win32Exception)
+            {
+                return LaunchResult.Ok(editorResult.Message + ". Copilot CLI could not be started: '" + environment.Command + "' was not found.");
+            }
+
+            return LaunchResult.Ok(editorResult.Message + " and started " + autostart.Describe(environment.Command));
+        }
+
+        /// <summary>The project's local workspace folder, or null when it has none on this machine.</summary>
+        private static string ResolveLocalCodePath(ProjectDefinition project)
+        {
+            var path = !string.IsNullOrWhiteSpace(project.Launch?.VsCodeLocal)
+                ? project.Launch.VsCodeLocal
+                : project.Locations?.LocalPath;
+
+            if (!string.IsNullOrWhiteSpace(path) && Directory.Exists(path))
+            {
+                return path;
+            }
+
+            return !string.IsNullOrWhiteSpace(project.ProjectRootPath) && Directory.Exists(project.ProjectRootPath)
+                ? project.ProjectRootPath
+                : null;
+        }
+
+        private static string BuildLocalTerminalScript(string path, LaunchEnvironment environment, IReadOnlyList<string> extraArguments)
+        {
+            var script = "Set-Location -LiteralPath " + PsQuote(path) + "; & " + PsQuote(environment.Command) +
+                         (string.IsNullOrWhiteSpace(environment.Arguments) ? string.Empty : " " + environment.Arguments.Trim());
+            return script + FormatExtraArguments(extraArguments);
+        }
+
+        private static string FormatExtraArguments(IReadOnlyList<string> extraArguments)
+        {
+            if (extraArguments == null || extraArguments.Count == 0)
+            {
+                return string.Empty;
+            }
+
+            var builder = new System.Text.StringBuilder();
+            foreach (var token in extraArguments)
+            {
+                builder.Append(' ').Append(PsQuote(token));
+            }
+
+            return builder.ToString();
         }
 
         /// <summary>
@@ -202,8 +387,12 @@ namespace ControlTower.Infrastructure.Launch
                 return LaunchResult.Unconfigured("Code path is not available");
             }
 
-            var script = "Set-Location -LiteralPath " + PsQuote(path) + "; & " + PsQuote(environment.Command) +
-                         (string.IsNullOrWhiteSpace(environment.Arguments) ? string.Empty : " " + environment.Arguments.Trim());
+            if (!TryResolveAutostart(project, environment, out var autostartTokens, out var rejection))
+            {
+                return rejection;
+            }
+
+            var script = BuildLocalTerminalScript(path, environment, autostartTokens);
             return StartTerminal(environment, project, script, path, "Opened " + environment.DisplayName);
         }
 
@@ -223,11 +412,22 @@ namespace ControlTower.Infrastructure.Launch
             }
 
             string remoteLine;
+            if (!TryResolveAutostart(project, environment, out var autostartTokens, out var autostartRejection))
+            {
+                return autostartRejection;
+            }
+
+            // Tokens are allowlist-validated (letters, digits, dot, underscore,
+            // hyphen), so they carry no meaning to cmd or a POSIX shell.
+            var remoteExtra = autostartTokens == null || autostartTokens.Count == 0
+                ? string.Empty
+                : " " + string.Join(" ", autostartTokens);
+
             if (!string.IsNullOrWhiteSpace(environment.RemoteCommand))
             {
                 remoteLine = windowsPath
-                    ? "cd /d " + remotePath + " && " + environment.RemoteCommand.Trim()
-                    : "cd '" + remotePath + "' && " + environment.RemoteCommand.Trim();
+                    ? "cd /d " + remotePath + " && " + environment.RemoteCommand.Trim() + remoteExtra
+                    : "cd '" + remotePath + "' && " + environment.RemoteCommand.Trim() + remoteExtra;
             }
             else if (!IsBareCommandName(environment.Command))
             {
@@ -238,12 +438,13 @@ namespace ControlTower.Infrastructure.Launch
             {
                 remoteLine = "powershell.exe -NoLogo -NoProfile -EncodedCommand " +
                              Convert.ToBase64String(System.Text.Encoding.Unicode.GetBytes(
-                                 BuildWindowsRemoteScript(remotePath, environment)));
+                                 BuildWindowsRemoteScript(remotePath, environment, autostartTokens)));
             }
             else
             {
                 remoteLine = "cd '" + remotePath + "' && " + environment.Command.Trim() +
-                             (string.IsNullOrWhiteSpace(environment.Arguments) ? string.Empty : " " + environment.Arguments.Trim());
+                             (string.IsNullOrWhiteSpace(environment.Arguments) ? string.Empty : " " + environment.Arguments.Trim()) +
+                             remoteExtra;
             }
 
             var ssh = string.IsNullOrWhiteSpace(_settings.SshCommand) ? "ssh" : _settings.SshCommand.Trim().Trim('"');
@@ -298,10 +499,11 @@ namespace ControlTower.Infrastructure.Launch
         /// "Access is denied" inside an SSH session, and they are often first on
         /// PATH (e.g. GitHub Copilot CLI), so resolve the first real executable.
         /// </summary>
-        private static string BuildWindowsRemoteScript(string remotePath, LaunchEnvironment environment)
+        private static string BuildWindowsRemoteScript(string remotePath, LaunchEnvironment environment, IReadOnlyList<string> extraArguments)
         {
             var name = environment.Command.Trim();
-            var args = string.IsNullOrWhiteSpace(environment.Arguments) ? string.Empty : " " + environment.Arguments.Trim();
+            var args = (string.IsNullOrWhiteSpace(environment.Arguments) ? string.Empty : " " + environment.Arguments.Trim()) +
+                       FormatExtraArguments(extraArguments);
             return "Set-Location -LiteralPath " + PsQuote(remotePath) + "\n" +
                    "$c = Get-Command -Name " + PsQuote(name) + " -CommandType Application -All -ErrorAction SilentlyContinue |" +
                    " Where-Object { $_.Source -notlike '*\\WindowsApps\\*' } | Select-Object -First 1\n" +
