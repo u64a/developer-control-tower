@@ -416,6 +416,18 @@ namespace ControlTower.Infrastructure.Registration
             {
                 lines.Add("  environment: " + EscapeScalar(launchEnvironment));
             }
+
+            var autostart = request.CopilotAutostart ?? existingProject?.Launch?.CopilotAutostart;
+            if (autostart != null && !autostart.IsDefault)
+            {
+                lines.Add("  copilot_autostart:");
+                lines.Add("    enabled: " + (autostart.Enabled ? "true" : "false"));
+                lines.Add("    session_mode: " + CopilotAutostart.FormatSessionMode(autostart.SessionMode));
+                lines.Add("    session_name: " + EscapeScalar(autostart.SessionName));
+                lines.Add("    agent: " + EscapeScalar(autostart.AgentName));
+                lines.Add("    yolo: " + (autostart.Yolo ? "true" : "false"));
+            }
+
             lines.Add(string.Empty);
             AppendDocs(lines, existingProject);
             AppendExternalRefs(lines, existingProject);

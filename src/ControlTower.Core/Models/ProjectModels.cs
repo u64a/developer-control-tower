@@ -86,6 +86,7 @@ namespace ControlTower.Core.Models
             VsCodeSsh = string.Empty;
             GitHub = string.Empty;
             Ado = string.Empty;
+            CopilotAutostart = new CopilotAutostart();
         }
 
         public string VsCodeLocal { get; set; }
@@ -98,6 +99,9 @@ namespace ControlTower.Core.Models
 
         /// <summary>Launch environment id (see <see cref="LaunchEnvironmentCatalog"/>). Empty = global default.</summary>
         public string Environment { get; set; } = string.Empty;
+
+        /// <summary>Copilot CLI session started alongside (or as) this project's launch.</summary>
+        public CopilotAutostart CopilotAutostart { get; set; }
     }
 
     public sealed class DocLink
@@ -201,6 +205,12 @@ namespace ControlTower.Core.Models
         /// valid environment id.
         /// </summary>
         public string LaunchEnvironment { get; set; }
+
+        /// <summary>
+        /// Copilot CLI autostart options. <c>null</c> preserves the existing
+        /// value on overwrite; a value replaces it.
+        /// </summary>
+        public CopilotAutostart CopilotAutostart { get; set; }
 
         /// <summary>
         /// Neutral remote URL slot used by the scan-and-register flow.

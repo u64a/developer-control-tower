@@ -255,6 +255,11 @@ namespace ControlTower.Desktop.ViewModels
                 OnPropertyChanged("CanOpenAdo");
                 OnPropertyChanged("CanOpenPlan");
                 OnPropertyChanged("CanManageProject");
+                _copilotAgentModeIndex = _selectedProject != null && _selectedProject.CopilotAutostart != null &&
+                                         !string.IsNullOrWhiteSpace(_selectedProject.CopilotAutostart.AgentName)
+                    ? 1
+                    : 0;
+                RaiseCopilotPropertyChanged();
                 if (_selectedProject != null)
                 {
                     // M-01: selection no longer auto-triggers a refresh.
@@ -565,6 +570,255 @@ namespace ControlTower.Desktop.ViewModels
             {
                 Load();
                 ApplyProjectView(def.Id);
+            }
+        }
+
+        // ------------------------------------------------- copilot autostart
+
+        private static readonly string[] CopilotProperties =
+        {
+            "CanConfigureCopilot", "CopilotAutostartEnabled", "CopilotOptionsEnabled",
+            "CopilotSessionModeIndex", "CopilotSessionNameVisible", "CopilotSessionName",
+            "CopilotAgentModeIndex", "CopilotAgentNameVisible", "CopilotAgentName",
+            "CopilotYolo", "CopilotCommandPreview", "CopilotHasError", "CopilotHint"
+        };
+
+        private int _copilotAgentModeIndex;
+
+        private CopilotAutostart Autostart
+        {
+            get { return SelectedProject == null ? null : SelectedProject.CopilotAutostart; }
+        }
+
+        public bool CanConfigureCopilot
+        {
+            get { return SelectedProject != null && SelectedProject.CopilotAutostart != null; }
+        }
+
+        /// <summary>Master switch; every other option stays disabled until this is on.</summary>
+        public bool CopilotAutostartEnabled
+        {
+            get { return Autostart != null && Autostart.Enabled; }
+            set
+            {
+                var autostart = Autostart;
+                if (autostart == null || autostart.Enabled == value)
+                {
+                    return;
+                }
+
+                autostart.Enabled = value;
+                PersistCopilotAutostart("Copilot CLI autostart " + (value ? "enabled" : "disabled") + " for " + SelectedProject.DisplayName);
+            }
+        }
+
+        public bool CopilotOptionsEnabled
+        {
+            get { return CanConfigureCopilot && CopilotAutostartEnabled; }
+        }
+
+        /// <summary>0 = resume the previous session, 1 = start a named session.</summary>
+        public int CopilotSessionModeIndex
+        {
+            get { return Autostart != null && Autostart.SessionMode == CopilotSessionMode.Name ? 1 : 0; }
+            set
+            {
+                var autostart = Autostart;
+                var mode = value == 1 ? CopilotSessionMode.Name : CopilotSessionMode.Resume;
+                if (autostart == null || autostart.SessionMode == mode)
+                {
+                    return;
+                }
+
+                autostart.SessionMode = mode;
+                PersistCopilotAutostart("Copilot session: " + (mode == CopilotSessionMode.Name ? "new named session" : "resume"));
+            }
+        }
+
+        public bool CopilotSessionNameVisible
+        {
+            get { return CopilotSessionModeIndex == 1; }
+        }
+
+        public string CopilotSessionName
+        {
+            get { return Autostart == null ? string.Empty : Autostart.SessionName; }
+            set { SetCopilotName(value, isAgent: false); }
+        }
+
+        /// <summary>0 = no agent, 1 = pass --agent.</summary>
+        public int CopilotAgentModeIndex
+        {
+            get
+            {
+                return Autostart != null && !string.IsNullOrWhiteSpace(Autostart.AgentName)
+                    ? 1
+                    : _copilotAgentModeIndex;
+            }
+            set
+            {
+                var autostart = Autostart;
+                var index = value == 1 ? 1 : 0;
+                if (autostart == null || CopilotAgentModeIndex == index)
+                {
+                    return;
+                }
+
+                _copilotAgentModeIndex = index;
+                if (index == 0)
+                {
+                    autostart.AgentName = string.Empty;
+                    PersistCopilotAutostart("Copilot agent: none");
+                    return;
+                }
+
+                RaiseCopilotPropertyChanged();
+            }
+        }
+
+        public bool CopilotAgentNameVisible
+        {
+            get { return CopilotAgentModeIndex == 1; }
+        }
+
+        public string CopilotAgentName
+        {
+            get { return Autostart == null ? string.Empty : Autostart.AgentName; }
+            set { SetCopilotName(value, isAgent: true); }
+        }
+
+        public bool CopilotYolo
+        {
+            get { return Autostart != null && Autostart.Yolo; }
+            set
+            {
+                var autostart = Autostart;
+                if (autostart == null || autostart.Yolo == value)
+                {
+                    return;
+                }
+
+                autostart.Yolo = value;
+                PersistCopilotAutostart("Copilot --yolo " + (value ? "on" : "off"));
+            }
+        }
+
+        /// <summary>The command that will run, or the reason it cannot run yet.</summary>
+        public string CopilotCommandPreview
+        {
+            get
+            {
+                var autostart = Autostart;
+                if (autostart == null || !autostart.Enabled)
+                {
+                    return string.Empty;
+                }
+
+                string error;
+                return autostart.TryBuildArguments(out _, out error) ? autostart.Describe("copilot") : error;
+            }
+        }
+
+        public bool CopilotHasError
+        {
+            get
+            {
+                var autostart = Autostart;
+                string error;
+                return autostart != null && autostart.Enabled && !autostart.TryBuildArguments(out _, out error);
+            }
+        }
+
+        /// <summary>Explains where the session appears for the project's current environment.</summary>
+        public string CopilotHint
+        {
+            get
+            {
+                if (!CopilotOptionsEnabled)
+                {
+                    return string.Empty;
+                }
+
+                var launch = SelectedLaunch;
+                return launch != null && launch.IsTerminal
+                    ? "Runs in the launched terminal."
+                    : "VS Code cannot be told to drive its integrated terminal from the command line, so Copilot CLI opens in a terminal beside it.";
+            }
+        }
+
+        /// <summary>
+        /// Shared setter for the two free-text names. Invalid text stays in the
+        /// box so the user can correct it, but is never written to disk.
+        /// </summary>
+        private void SetCopilotName(string value, bool isAgent)
+        {
+            var autostart = Autostart;
+            if (autostart == null)
+            {
+                return;
+            }
+
+            var trimmed = (value ?? string.Empty).Trim();
+            var current = isAgent ? autostart.AgentName : autostart.SessionName;
+            if (string.Equals(current, trimmed, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            if (isAgent)
+            {
+                autostart.AgentName = trimmed;
+            }
+            else
+            {
+                autostart.SessionName = trimmed;
+            }
+
+            if (trimmed.Length > 0 && !CopilotAutostart.IsValidName(trimmed))
+            {
+                RaiseCopilotPropertyChanged();
+                StatusMessage = (isAgent ? "Agent" : "Session") +
+                                " name may only contain letters, numbers, dot, underscore and hyphen. Not saved.";
+                return;
+            }
+
+            PersistCopilotAutostart("Copilot " + (isAgent ? "agent" : "session name") + " saved");
+        }
+
+        /// <summary>
+        /// Writes the selected project's autostart options to its project.yml.
+        /// The portfolio is not reloaded: the in-memory overview already holds
+        /// the new values, and a reload would drop the user's focus mid-edit.
+        /// </summary>
+        private void PersistCopilotAutostart(string message)
+        {
+            RaiseCopilotPropertyChanged();
+
+            var project = SelectedProject;
+            if (project == null || project.CopilotAutostart == null)
+            {
+                return;
+            }
+
+            var def = _service.GetProjectDefinition(new ProjectRef { Id = project.Id, Path = project.SourcePath });
+            if (def == null)
+            {
+                StatusMessage = "Could not load project to update.";
+                return;
+            }
+
+            var request = BuildRequestFromDefinition(def, project.SourcePath);
+            request.CopilotAutostart = project.CopilotAutostart.Clone();
+
+            var result = _service.RegisterProject(request);
+            StatusMessage = result.Success ? message : result.Message;
+        }
+
+        private void RaiseCopilotPropertyChanged()
+        {
+            foreach (var name in CopilotProperties)
+            {
+                OnPropertyChanged(name);
             }
         }
 

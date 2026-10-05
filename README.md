@@ -57,6 +57,40 @@ icon appears when a tool isn't installed.
 
 ![Settings dialog showing the default launch environment selector](docs/images/settings-launch-environment.png)
 
+## Copilot CLI autostart
+
+A project can start a Copilot CLI session as part of its launch, so you don't
+have to open a terminal and retype the same command each time. Select the
+project and use the **LAUNCH** card:
+
+| Option    | Choices                                            | Flag             |
+| --------- | -------------------------------------------------- | ---------------- |
+| Autostart | Off by default; turning it on reveals the rest.     | —                |
+| Session   | Resume previous session (default), or a named one.  | `--resume`, `--name` |
+| Agent     | None (default), or a custom agent name.             | `--agent`        |
+| `--yolo`  | Off by default.                                     | `--yolo`         |
+
+The options are saved per project in that project's `project.yml`, so they
+apply again the next time you launch it. A project that has never been
+configured starts nothing, exactly as before.
+
+Where the session appears depends on the launch environment:
+
+- **GitHub Copilot CLI** — the flags are added to the session that already
+  opens, so nothing extra is launched.
+- **VS Code (or any editor environment)** — VS Code has no command line that
+  opens its integrated terminal and runs a command, so Copilot CLI opens in a
+  terminal beside the editor, in the same folder. If the editor opens but
+  Copilot CLI cannot start, the editor launch still succeeds and the status
+  line says why.
+- **SSH projects launched into an editor** — no session starts, because
+  Copilot CLI would run on this machine rather than the remote host.
+
+Session and agent names are limited to letters, numbers, dot, underscore and
+hyphen. Anything else is refused rather than placed on a command line, and a
+hand-edited `project.yml` containing an unsupported name loads with a warning
+and ignores that name.
+
 ## Install
 
 Download the Setup file for your architecture from

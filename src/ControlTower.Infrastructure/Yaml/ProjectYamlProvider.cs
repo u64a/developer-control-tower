@@ -145,6 +145,43 @@ namespace ControlTower.Infrastructure.Yaml
                     {
                         project.Launch.Environment = environmentId;
                     }
+
+                    if (dto.Launch.CopilotAutostart != null)
+                    {
+                        var autostart = dto.Launch.CopilotAutostart;
+
+                        // Names come from a file on disk and are placed on a
+                        // command line, so anything outside the allowlist is
+                        // dropped rather than trusted.
+                        var sessionName = (autostart.SessionName ?? string.Empty).Trim();
+                        var agentName = (autostart.Agent ?? string.Empty).Trim();
+                        if (sessionName.Length > 0 && !CopilotAutostart.IsValidName(sessionName))
+                        {
+                            result.Issues.Add(new ValidationIssue(
+                                IssueSeverity.Warning,
+                                "project/copilot-autostart/session-name",
+                                "launch.copilot_autostart.session_name contains unsupported characters and was ignored."));
+                            sessionName = string.Empty;
+                        }
+
+                        if (agentName.Length > 0 && !CopilotAutostart.IsValidName(agentName))
+                        {
+                            result.Issues.Add(new ValidationIssue(
+                                IssueSeverity.Warning,
+                                "project/copilot-autostart/agent",
+                                "launch.copilot_autostart.agent contains unsupported characters and was ignored."));
+                            agentName = string.Empty;
+                        }
+
+                        project.Launch.CopilotAutostart = new CopilotAutostart
+                        {
+                            Enabled = autostart.Enabled,
+                            SessionMode = CopilotAutostart.ParseSessionMode(autostart.SessionMode),
+                            SessionName = sessionName,
+                            AgentName = agentName,
+                            Yolo = autostart.Yolo
+                        };
+                    }
                 }
 
                 if (dto.Docs != null)
