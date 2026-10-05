@@ -556,6 +556,13 @@
                                      ToolTip="Letters, numbers, dot, underscore and hyphen only."
                                      Margin="0,0,0,6" />
 
+                            <CheckBox IsChecked="{Binding CopilotIntegratedTerminal, Mode=TwoWay}"
+                                      Visibility="{Binding CopilotIntegratedTerminalVisible, Converter={StaticResource BoolToVis}}"
+                                      Content="Run in VS Code's terminal instead of a separate window"
+                                      AutomationProperties.Name="Run Copilot in the VS Code terminal"
+                                      ToolTip="Writes a .vscode/tasks.json task that VS Code runs when it opens the folder, and keeps it out of git. Only runs when the folder opens in a new window."
+                                      Margin="0,0,0,6" />
+
                             <CheckBox IsChecked="{Binding CopilotYolo, Mode=TwoWay}"
                                       Content="--yolo (allow all tools, paths and URLs)"
                                       AutomationProperties.Name="Copilot yolo mode"

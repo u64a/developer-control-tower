@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Text.Json.Nodes;
 using ControlTower.Core.Models;
 using ControlTower.Infrastructure.Configuration;
 using ControlTower.Infrastructure.Launch;
@@ -382,7 +383,188 @@ public class CopilotAutostartTests : IDisposable
         Assert.Empty(started);
     }
 
+    // ------------------------------------------------- integrated terminal
+
+    [Fact]
+    public void IntegratedTerminal_WritesTaskAndSkipsSideTerminal()
+    {
+        var project = LocalProject();
+        project.Launch.CopilotAutostart = new CopilotAutostart
+        {
+            Enabled = true,
+            Yolo = true,
+            AgentName = "squad",
+            UseIntegratedTerminal = true
+        };
+
+        var started = Launch(project, out var result);
+
+        Assert.True(result.Success);
+        Assert.Single(started);
+        Assert.Contains("--new-window", started[0].Arguments);
+
+        var tasks = JsonNode.Parse(File.ReadAllText(TasksPath()))!.AsObject();
+        Assert.Equal("2.0.0", tasks["version"]!.GetValue<string>());
+
+        var task = tasks["tasks"]!.AsArray().Single()!.AsObject();
+        Assert.Equal(VsCodeTaskFile.TaskLabel, task["label"]!.GetValue<string>());
+        Assert.Equal("copilot", task["command"]!.GetValue<string>());
+        Assert.Equal("folderOpen", task["runOptions"]!["runOn"]!.GetValue<string>());
+        Assert.Equal(
+            new[] { "--yolo", "--agent", "squad", "--resume" },
+            task["args"]!.AsArray().Select(a => a!.GetValue<string>()).ToArray());
+        Assert.Contains("in its terminal", result.Message);
+    }
+
+    [Fact]
+    public void IntegratedTerminal_PreservesExistingUserTasks()
+    {
+        WriteTasksJson("""
+        {
+          // a comment, which VS Code allows
+          "version": "2.0.0",
+          "tasks": [ { "label": "build", "type": "shell", "command": "dotnet build" } ]
+        }
+        """);
+
+        var project = LocalProject();
+        project.Launch.CopilotAutostart = new CopilotAutostart { Enabled = true, UseIntegratedTerminal = true };
+
+        Launch(project, out var result);
+
+        Assert.True(result.Success);
+        var labels = JsonNode.Parse(File.ReadAllText(TasksPath()))!["tasks"]!.AsArray()
+            .Select(t => t!["label"]!.GetValue<string>()).ToArray();
+        Assert.Equal(new[] { "build", VsCodeTaskFile.TaskLabel }, labels);
+    }
+
+    [Fact]
+    public void IntegratedTerminal_RewritingDoesNotDuplicateTheTask()
+    {
+        var project = LocalProject();
+        project.Launch.CopilotAutostart = new CopilotAutostart { Enabled = true, UseIntegratedTerminal = true };
+
+        Launch(project, out _);
+        Launch(project, out _);
+
+        var tasks = JsonNode.Parse(File.ReadAllText(TasksPath()))!["tasks"]!.AsArray();
+        Assert.Single(tasks);
+    }
+
+    [Fact]
+    public void IntegratedTerminal_UnparseableFileIsLeftAlone()
+    {
+        WriteTasksJson("{ this is not json");
+
+        var project = LocalProject();
+        project.Launch.CopilotAutostart = new CopilotAutostart { Enabled = true, UseIntegratedTerminal = true };
+
+        var started = Launch(project, out var result);
+
+        Assert.True(result.Success);
+        Assert.Single(started);
+        Assert.Equal("{ this is not json", File.ReadAllText(TasksPath()));
+        Assert.Contains("could not be parsed", result.Message);
+    }
+
+    [Fact]
+    public void ClearingIntegratedTerminal_RemovesOnlyTheGeneratedTask()
+    {
+        var project = LocalProject();
+        project.Launch.CopilotAutostart = new CopilotAutostart { Enabled = true, UseIntegratedTerminal = true };
+        Launch(project, out _);
+
+        // The user clears the checkbox: the task must stop firing, but any
+        // task they wrote themselves has to survive.
+        var tasks = JsonNode.Parse(File.ReadAllText(TasksPath()))!.AsObject();
+        tasks["tasks"]!.AsArray().Add(new JsonObject { ["label"] = "build", ["command"] = "dotnet build" });
+        File.WriteAllText(TasksPath(), tasks.ToJsonString());
+
+        project.Launch.CopilotAutostart.UseIntegratedTerminal = false;
+        Launch(project, out var result);
+
+        Assert.True(result.Success);
+        var labels = JsonNode.Parse(File.ReadAllText(TasksPath()))!["tasks"]!.AsArray()
+            .Select(t => t!["label"]!.GetValue<string>()).ToArray();
+        Assert.Equal(new[] { "build" }, labels);
+    }
+
+    [Fact]
+    public void IntegratedTerminal_AddsGitExcludeEntryOnce()
+    {
+        Directory.CreateDirectory(Path.Combine(_root, ".git", "info"));
+
+        var project = LocalProject();
+        project.Launch.CopilotAutostart = new CopilotAutostart { Enabled = true, UseIntegratedTerminal = true };
+
+        Launch(project, out _);
+        Launch(project, out _);
+
+        var exclude = File.ReadAllLines(Path.Combine(_root, ".git", "info", "exclude"));
+        Assert.Single(exclude, l => l.Trim() == "/.vscode/tasks.json");
+    }
+
+    [Fact]
+    public void IntegratedTerminal_WithoutGitRepository_StillWritesTheTask()
+    {
+        var project = LocalProject();
+        project.Launch.CopilotAutostart = new CopilotAutostart { Enabled = true, UseIntegratedTerminal = true };
+
+        Launch(project, out var result);
+
+        Assert.True(result.Success);
+        Assert.True(File.Exists(TasksPath()));
+        Assert.False(Directory.Exists(Path.Combine(_root, ".git")));
+    }
+
+    [Fact]
+    public void IntegratedTerminal_InvalidName_StartsNothingAndExplains()
+    {
+        var project = LocalProject();
+        project.Launch.CopilotAutostart = new CopilotAutostart
+        {
+            Enabled = true,
+            UseIntegratedTerminal = true,
+            SessionMode = CopilotSessionMode.Name,
+            SessionName = string.Empty
+        };
+
+        var started = Launch(project, out var result);
+
+        Assert.True(result.Success);
+        Assert.Single(started);
+        Assert.False(File.Exists(TasksPath()));
+        Assert.Contains("Enter a session name", result.Message);
+    }
+
+    [Fact]
+    public void IntegratedTerminal_RoundTripsThroughProjectYaml()
+    {
+        var (service, yamlPath, localPath) = NewRegistration();
+        var request = Request(localPath);
+        request.CopilotAutostart = new CopilotAutostart
+        {
+            Enabled = true,
+            UseIntegratedTerminal = true,
+            AgentName = "squad"
+        };
+
+        Assert.True(service.RegisterProject(request).Success);
+
+        var autostart = Load(yamlPath).Launch.CopilotAutostart;
+        Assert.True(autostart.UseIntegratedTerminal);
+        Assert.Equal("squad", autostart.AgentName);
+    }
+
     // --------------------------------------------------------------- helpers
+
+    private string TasksPath() => Path.Combine(_root, ".vscode", "tasks.json");
+
+    private void WriteTasksJson(string content)
+    {
+        Directory.CreateDirectory(Path.Combine(_root, ".vscode"));
+        File.WriteAllText(TasksPath(), content);
+    }
 
     private ProjectDefinition LocalProject()
     {

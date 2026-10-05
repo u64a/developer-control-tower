@@ -580,7 +580,8 @@ namespace ControlTower.Desktop.ViewModels
             "CanConfigureCopilot", "CopilotAutostartEnabled", "CopilotOptionsEnabled",
             "CopilotSessionModeIndex", "CopilotSessionNameVisible", "CopilotSessionName",
             "CopilotAgentModeIndex", "CopilotAgentNameVisible", "CopilotAgentName",
-            "CopilotYolo", "CopilotCommandPreview", "CopilotHasError", "CopilotHint"
+            "CopilotYolo", "CopilotCommandPreview", "CopilotHasError", "CopilotHint",
+            "CopilotIntegratedTerminal", "CopilotIntegratedTerminalVisible"
         };
 
         private int _copilotAgentModeIndex;
@@ -703,6 +704,32 @@ namespace ControlTower.Desktop.ViewModels
             }
         }
 
+        /// <summary>Only editor environments can host an integrated terminal.</summary>
+        public bool CopilotIntegratedTerminalVisible
+        {
+            get
+            {
+                var launch = SelectedLaunch;
+                return CopilotOptionsEnabled && (launch == null || !launch.IsTerminal);
+            }
+        }
+
+        public bool CopilotIntegratedTerminal
+        {
+            get { return Autostart != null && Autostart.UseIntegratedTerminal; }
+            set
+            {
+                var autostart = Autostart;
+                if (autostart == null || autostart.UseIntegratedTerminal == value)
+                {
+                    return;
+                }
+
+                autostart.UseIntegratedTerminal = value;
+                PersistCopilotAutostart("Copilot runs in " + (value ? "the VS Code terminal" : "a separate terminal"));
+            }
+        }
+
         /// <summary>The command that will run, or the reason it cannot run yet.</summary>
         public string CopilotCommandPreview
         {
@@ -740,8 +767,14 @@ namespace ControlTower.Desktop.ViewModels
                 }
 
                 var launch = SelectedLaunch;
-                return launch != null && launch.IsTerminal
-                    ? "Runs in the launched terminal."
+                if (launch != null && launch.IsTerminal)
+                {
+                    return "Runs in the launched terminal.";
+                }
+
+                return CopilotIntegratedTerminal
+                    ? "Runs in VS Code's terminal via a generated .vscode/tasks.json task (kept out of git). " +
+                      "VS Code only runs it when the folder opens in a new window, so close that window first if it is already open."
                     : "VS Code cannot be told to drive its integrated terminal from the command line, so Copilot CLI opens in a terminal beside it.";
             }
         }

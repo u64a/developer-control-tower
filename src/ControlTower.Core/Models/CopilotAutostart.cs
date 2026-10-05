@@ -44,6 +44,15 @@ namespace ControlTower.Core.Models
         /// <summary>Adds <c>--yolo</c> (allow all tools, paths and URLs).</summary>
         public bool Yolo { get; set; }
 
+        /// <summary>
+        /// Runs Copilot CLI inside VS Code's integrated terminal instead of a
+        /// terminal beside it. VS Code has no command line that runs a command
+        /// in its terminal, so this works by writing a <c>.vscode/tasks.json</c>
+        /// task that VS Code runs when it opens the folder. Only meaningful for
+        /// editor environments; a terminal environment already is the session.
+        /// </summary>
+        public bool UseIntegratedTerminal { get; set; }
+
         /// <summary>True when nothing has been configured and the block can be omitted from project.yml.</summary>
         public bool IsDefault
         {
@@ -51,6 +60,7 @@ namespace ControlTower.Core.Models
             {
                 return !Enabled &&
                        !Yolo &&
+                       !UseIntegratedTerminal &&
                        SessionMode == CopilotSessionMode.Resume &&
                        string.IsNullOrWhiteSpace(SessionName) &&
                        string.IsNullOrWhiteSpace(AgentName);
@@ -65,7 +75,8 @@ namespace ControlTower.Core.Models
                 SessionMode = SessionMode,
                 SessionName = SessionName ?? string.Empty,
                 AgentName = AgentName ?? string.Empty,
-                Yolo = Yolo
+                Yolo = Yolo,
+                UseIntegratedTerminal = UseIntegratedTerminal
             };
         }
 

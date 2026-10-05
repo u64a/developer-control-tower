@@ -179,7 +179,8 @@ namespace ControlTower.Infrastructure.Yaml
                             SessionMode = CopilotAutostart.ParseSessionMode(autostart.SessionMode),
                             SessionName = sessionName,
                             AgentName = agentName,
-                            Yolo = autostart.Yolo
+                            Yolo = autostart.Yolo,
+                            UseIntegratedTerminal = autostart.IntegratedTerminal
                         };
                     }
                 }

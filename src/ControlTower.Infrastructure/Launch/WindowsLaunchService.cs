@@ -50,14 +50,32 @@ namespace ControlTower.Infrastructure.Launch
                         return LaunchTerminal(project, environment);
                     }
 
+                    // The task file has to exist before the folder opens, so
+                    // prepare it ahead of starting the editor.
+                    var integrated = PrepareIntegratedCopilot(project, out var integratedNote);
                     var editorResult = LaunchLocalCode(project, environment);
-                    return editorResult.Success ? StartCompanionCopilot(project, editorResult) : editorResult;
+                    if (!editorResult.Success)
+                    {
+                        return editorResult;
+                    }
+
+                    return integrated
+                        ? LaunchResult.Ok(editorResult.Message + integratedNote)
+                        : StartCompanionCopilot(project, editorResult);
                 }
 
                 if (targetKind == LaunchTargetKind.CodeAdmin)
                 {
+                    var integratedAdmin = PrepareIntegratedCopilot(project, out var adminNote);
                     var adminResult = LaunchLocalCodeAsAdmin(project);
-                    return adminResult.Success ? StartCompanionCopilot(project, adminResult) : adminResult;
+                    if (!adminResult.Success)
+                    {
+                        return adminResult;
+                    }
+
+                    return integratedAdmin
+                        ? LaunchResult.Ok(adminResult.Message + adminNote)
+                        : StartCompanionCopilot(project, adminResult);
                 }
 
                 if (targetKind == LaunchTargetKind.RemoteCode)
@@ -183,6 +201,44 @@ namespace ControlTower.Infrastructure.Launch
         /// terminal beside the editor in the same folder. A failure here never
         /// turns the successful editor launch into a failed one.
         /// </summary>
+        /// <summary>
+        /// Writes the VS Code task that runs Copilot CLI in the integrated
+        /// terminal, when the project asks for it. Returns true when the
+        /// integrated route owns this launch, so no terminal opens beside the
+        /// editor. When the project does not ask for it, any task this tool
+        /// wrote earlier is removed so a cleared checkbox stops taking effect.
+        /// </summary>
+        private bool PrepareIntegratedCopilot(ProjectDefinition project, out string note)
+        {
+            note = string.Empty;
+
+            var autostart = project.Launch?.CopilotAutostart;
+            var path = ResolveLocalCodePath(project);
+            if (path == null)
+            {
+                return false;
+            }
+
+            if (autostart == null || !autostart.Enabled || !autostart.UseIntegratedTerminal)
+            {
+                VsCodeTaskFile.Remove(path);
+                return false;
+            }
+
+            if (!autostart.TryBuildArguments(out var tokens, out var error))
+            {
+                note = ". Copilot CLI not started: " + error;
+                return true;
+            }
+
+            var environment = CopilotEnvironment();
+            var written = VsCodeTaskFile.Write(path, environment.Command, tokens, true);
+            note = written.Success
+                ? " and queued " + autostart.Describe(environment.Command) + " in its terminal"
+                : ". Copilot CLI not started: " + written.Error;
+            return true;
+        }
+
         private LaunchResult StartCompanionCopilot(ProjectDefinition project, LaunchResult editorResult)
         {
             var autostart = project.Launch?.CopilotAutostart;

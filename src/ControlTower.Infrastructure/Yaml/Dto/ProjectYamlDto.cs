@@ -100,6 +100,9 @@ namespace ControlTower.Infrastructure.Yaml.Dto
 
         [YamlMember(Alias = "yolo")]
         public bool Yolo { get; set; }
+
+        [YamlMember(Alias = "integrated_terminal")]
+        public bool IntegratedTerminal { get; set; }
     }
 
     public sealed class DocLinkDto

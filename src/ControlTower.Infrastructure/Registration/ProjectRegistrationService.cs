@@ -426,6 +426,7 @@ namespace ControlTower.Infrastructure.Registration
                 lines.Add("    session_name: " + EscapeScalar(autostart.SessionName));
                 lines.Add("    agent: " + EscapeScalar(autostart.AgentName));
                 lines.Add("    yolo: " + (autostart.Yolo ? "true" : "false"));
+                lines.Add("    integrated_terminal: " + (autostart.UseIntegratedTerminal ? "true" : "false"));
             }
 
             lines.Add(string.Empty);
