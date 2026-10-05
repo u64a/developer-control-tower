@@ -556,6 +556,48 @@ public class CopilotAutostartTests : IDisposable
         Assert.Equal("squad", autostart.AgentName);
     }
 
+    // ------------------------------------------- environment compatibility
+
+    [Theory]
+    [InlineData(LaunchEnvironmentCatalog.VsCodeId, true)]
+    [InlineData(LaunchEnvironmentCatalog.CopilotCliId, true)]
+    [InlineData(LaunchEnvironmentCatalog.ClaudeCodeId, false)]
+    public void BuiltInEnvironments_ReportCopilotSupport(string id, bool expected)
+    {
+        var environment = LaunchEnvironmentCatalog.CreateDefault().Find(id)!;
+        Assert.Equal(expected, environment.SupportsCopilotAutostart);
+    }
+
+    [Fact]
+    public void CustomTerminalRunningCopilot_SupportsAutostart()
+    {
+        var environment = new LaunchEnvironment(
+            "my-copilot", "My Copilot", LaunchEnvironmentKind.Terminal, @"C:\tools\copilot.exe");
+
+        Assert.True(environment.IsCopilotCli);
+        Assert.True(environment.SupportsCopilotAutostart);
+    }
+
+    [Fact]
+    public void CustomTerminalRunningAnotherAgent_DoesNotSupportAutostart()
+    {
+        var environment = new LaunchEnvironment(
+            "gemini", "Gemini CLI", LaunchEnvironmentKind.Terminal, "gemini");
+
+        Assert.False(environment.IsCopilotCli);
+        Assert.False(environment.SupportsCopilotAutostart);
+    }
+
+    [Fact]
+    public void CustomEditor_SupportsAutostartRegardlessOfCommand()
+    {
+        var environment = new LaunchEnvironment(
+            "cursor", "Cursor", LaunchEnvironmentKind.Editor, "cursor");
+
+        Assert.False(environment.IsCopilotCli);
+        Assert.True(environment.SupportsCopilotAutostart);
+    }
+
     // --------------------------------------------------------------- helpers
 
     private string TasksPath() => Path.Combine(_root, ".vscode", "tasks.json");

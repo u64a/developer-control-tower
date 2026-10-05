@@ -84,6 +84,9 @@ Where the session appears depends on the launch environment:
   terminal beside the editor, in the same folder. If the editor opens but
   Copilot CLI cannot start, the editor launch still succeeds and the status
   line says why.
+- **Another agent's CLI, such as Claude Code** — the options are hidden
+  entirely. Those tools take different options, so there is nothing for
+  Copilot autostart to do.
 - **SSH projects launched into an editor** — no session starts, because
   Copilot CLI would run on this machine rather than the remote host.
 

@@ -155,18 +155,7 @@ namespace ControlTower.Infrastructure.Launch
 
         private static bool IsCopilotEnvironment(LaunchEnvironment environment)
         {
-            if (environment == null)
-            {
-                return false;
-            }
-
-            if (string.Equals(environment.Id, LaunchEnvironmentCatalog.CopilotCliId, StringComparison.Ordinal))
-            {
-                return true;
-            }
-
-            var name = Path.GetFileNameWithoutExtension((environment.Command ?? string.Empty).Trim().Trim('"'));
-            return string.Equals(name, "copilot", StringComparison.OrdinalIgnoreCase);
+            return environment != null && environment.IsCopilotCli;
         }
 
         /// <summary>

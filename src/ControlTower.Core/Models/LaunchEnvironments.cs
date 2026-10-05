@@ -64,6 +64,34 @@ namespace ControlTower.Core.Models
         public string IconPath { get; }
 
         public bool IsBuiltIn { get; }
+
+        /// <summary>
+        /// True when this environment runs Copilot CLI itself, either as the
+        /// built-in or as a custom environment pointing at the same command.
+        /// </summary>
+        public bool IsCopilotCli
+        {
+            get
+            {
+                if (string.Equals(Id, LaunchEnvironmentCatalog.CopilotCliId, StringComparison.Ordinal))
+                {
+                    return true;
+                }
+
+                var name = System.IO.Path.GetFileNameWithoutExtension(Command.Trim().Trim('"'));
+                return string.Equals(name, "copilot", StringComparison.OrdinalIgnoreCase);
+            }
+        }
+
+        /// <summary>
+        /// True when launching into this environment can start a Copilot CLI
+        /// session. Editors get one beside or inside them; a terminal has to be
+        /// Copilot itself, because another agent's CLI takes different options.
+        /// </summary>
+        public bool SupportsCopilotAutostart
+        {
+            get { return Kind == LaunchEnvironmentKind.Editor || IsCopilotCli; }
+        }
     }
 
     /// <summary>

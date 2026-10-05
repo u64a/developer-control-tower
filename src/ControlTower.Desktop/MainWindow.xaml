@@ -511,6 +511,7 @@
                             </StackPanel>
                         </Button>
 
+                        <StackPanel Visibility="{Binding CopilotSectionVisible, Converter={StaticResource BoolToVis}}">
                         <Separator Margin="0,10,0,8" Opacity="0.35" />
 
                         <CheckBox IsChecked="{Binding CopilotAutostartEnabled, Mode=TwoWay}"
@@ -574,6 +575,7 @@
                                        FontSize="11"
                                        TextWrapping="Wrap"
                                        Foreground="{DynamicResource SecondaryTextBrush}" />
+                        </StackPanel>
                         </StackPanel>
                     </StackPanel>
                 </Border>

@@ -581,7 +581,8 @@ namespace ControlTower.Desktop.ViewModels
             "CopilotSessionModeIndex", "CopilotSessionNameVisible", "CopilotSessionName",
             "CopilotAgentModeIndex", "CopilotAgentNameVisible", "CopilotAgentName",
             "CopilotYolo", "CopilotCommandPreview", "CopilotHasError", "CopilotHint",
-            "CopilotIntegratedTerminal", "CopilotIntegratedTerminalVisible"
+            "CopilotIntegratedTerminal", "CopilotIntegratedTerminalVisible",
+            "CopilotSectionVisible"
         };
 
         private int _copilotAgentModeIndex;
@@ -591,9 +592,28 @@ namespace ControlTower.Desktop.ViewModels
             get { return SelectedProject == null ? null : SelectedProject.CopilotAutostart; }
         }
 
+        /// <summary>
+        /// Hides the whole Copilot block for environments that cannot run it.
+        /// Claude Code and other agent CLIs take different options, so offering
+        /// Copilot settings there would promise something launch never does.
+        /// </summary>
+        public bool CopilotSectionVisible
+        {
+            get
+            {
+                var launch = SelectedLaunch;
+                return launch == null || launch.SupportsCopilotAutostart;
+            }
+        }
+
         public bool CanConfigureCopilot
         {
-            get { return SelectedProject != null && SelectedProject.CopilotAutostart != null; }
+            get
+            {
+                return SelectedProject != null &&
+                       SelectedProject.CopilotAutostart != null &&
+                       CopilotSectionVisible;
+            }
         }
 
         /// <summary>Master switch; every other option stays disabled until this is on.</summary>
