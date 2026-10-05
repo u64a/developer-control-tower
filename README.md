@@ -68,6 +68,7 @@ project and use the **LAUNCH** card:
 | Autostart | Off by default; turning it on reveals the rest.     | —                |
 | Session   | Resume previous session (default), or a named one.  | `--resume`, `--name` |
 | Agent     | None (default), or a custom agent name.             | `--agent`        |
+| VS Code terminal | Off by default; see below.                  | —                |
 | `--yolo`  | Off by default.                                     | `--yolo`         |
 
 The options are saved per project in that project's `project.yml`, so they
@@ -85,6 +86,27 @@ Where the session appears depends on the launch environment:
   line says why.
 - **SSH projects launched into an editor** — no session starts, because
   Copilot CLI would run on this machine rather than the remote host.
+
+### Running inside VS Code's terminal
+
+VS Code has no command line that runs a command in its integrated terminal.
+The only supported mechanism is a task that VS Code runs when it opens a
+folder, so **Run in VS Code's terminal** generates one:
+
+- `.vscode/tasks.json` is written before the editor starts, with a single
+  `Developer Control Tower: Copilot CLI` task using `runOn: folderOpen`.
+- An existing `tasks.json` is merged — only the tool's own label is replaced,
+  and a file that cannot be parsed is left untouched and reported.
+- The file is added to `.git/info/exclude`, so it never reaches a commit and
+  no tracked `.gitignore` is modified.
+- Clearing the checkbox removes the generated task again.
+
+Two limits come from VS Code itself. The task runs only when the folder opens
+in a **new** window, so an already-open project just gets focus and no
+session. And the first automatic task of any kind needs permission, which VS
+Code records as `"task.allowAutomaticTasks": "on"` in your **user** settings —
+a global switch, so from then on any folder with such a task runs it without
+asking. Set it to `"auto"` if you would rather be asked per folder.
 
 **Open Code RunAs Admin** starts the Copilot session too. The editor is
 elevated but the Copilot terminal is not, because the CLI never needs
