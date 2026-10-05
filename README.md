@@ -86,6 +86,12 @@ Where the session appears depends on the launch environment:
 - **SSH projects launched into an editor** — no session starts, because
   Copilot CLI would run on this machine rather than the remote host.
 
+**Open Code RunAs Admin** starts the Copilot session too. The editor is
+elevated but the Copilot terminal is not, because the CLI never needs
+Administrator. If Developer Control Tower is itself already running elevated,
+Windows raises no prompt and VS Code opens as a new window inside the elevated
+instance you already have, which is easy to miss among existing windows.
+
 Session and agent names are limited to letters, numbers, dot, underscore and
 hyphen. Anything else is refused rather than placed on a command line, and a
 hand-edited `project.yml` containing an unsupported name loads with a warning

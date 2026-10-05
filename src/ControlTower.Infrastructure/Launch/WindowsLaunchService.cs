@@ -56,7 +56,8 @@ namespace ControlTower.Infrastructure.Launch
 
                 if (targetKind == LaunchTargetKind.CodeAdmin)
                 {
-                    return LaunchLocalCodeAsAdmin(project);
+                    var adminResult = LaunchLocalCodeAsAdmin(project);
+                    return adminResult.Success ? StartCompanionCopilot(project, adminResult) : adminResult;
                 }
 
                 if (targetKind == LaunchTargetKind.RemoteCode)

@@ -334,6 +334,54 @@ public class CopilotAutostartTests : IDisposable
         Assert.DoesNotContain("--yolo", DecodeScript(started[0]));
     }
 
+    [Fact]
+    public void CodeAdmin_WithAutostart_OpensElevatedEditorThenCopilotTerminal()
+    {
+        var project = LocalProject();
+        project.Launch.CopilotAutostart = new CopilotAutostart
+        {
+            Enabled = true,
+            Yolo = true,
+            AgentName = "squad"
+        };
+
+        var started = Launch(project, LaunchTargetKind.CodeAdmin, out var result);
+
+        Assert.True(result.Success);
+        Assert.Equal(2, started.Count);
+        Assert.Equal("runas", started[0].Verb);
+        Assert.Contains("--new-window", started[0].Arguments);
+
+        // The Copilot session deliberately inherits the caller's token rather
+        // than elevating: the CLI never needs Administrator to run.
+        Assert.NotEqual("runas", started[1].Verb);
+        Assert.Contains("& 'copilot' '--yolo' '--agent' 'squad' '--resume'", DecodeScript(started[1]));
+        Assert.Contains("copilot --yolo --agent squad --resume", result.Message);
+    }
+
+    [Fact]
+    public void CodeAdmin_WithoutAutostart_OpensElevatedEditorOnly()
+    {
+        var started = Launch(LocalProject(), LaunchTargetKind.CodeAdmin, out var result);
+
+        Assert.True(result.Success);
+        Assert.Single(started);
+        Assert.Equal("runas", started[0].Verb);
+    }
+
+    [Fact]
+    public void CodeAdmin_WithAutostartButNoLocalFolder_SkipsCopilot()
+    {
+        var project = new ProjectDefinition { Id = "p1", DisplayName = "Remote" };
+        project.Locations.SshTarget = "devbox:/home/me/repo";
+        project.Launch.CopilotAutostart = new CopilotAutostart { Enabled = true };
+
+        var started = Launch(project, LaunchTargetKind.CodeAdmin, out var result);
+
+        Assert.False(result.Success);
+        Assert.Empty(started);
+    }
+
     // --------------------------------------------------------------- helpers
 
     private ProjectDefinition LocalProject()
@@ -351,9 +399,15 @@ public class CopilotAutostartTests : IDisposable
 
     private static List<ProcessStartInfo> Launch(ProjectDefinition project, out LaunchResult result)
     {
+        return Launch(project, LaunchTargetKind.Code, out result);
+    }
+
+    private static List<ProcessStartInfo> Launch(
+        ProjectDefinition project, LaunchTargetKind targetKind, out LaunchResult result)
+    {
         var started = new List<ProcessStartInfo>();
         var svc = new WindowsLaunchService(new ToolSettings(), started.Add);
-        result = svc.Launch(project, LaunchTargetKind.Code);
+        result = svc.Launch(project, targetKind);
         return started;
     }
 
