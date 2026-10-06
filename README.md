@@ -100,6 +100,11 @@ The update step never receives the launch environment's own arguments, since
 those are session flags the `update` subcommand would reject. A failed update
 check — being offline, for example — does not stop the session from starting.
 
+Because the update step acts on the globally installed CLI rather than on the
+project, a `project.yml` found inside a working tree cannot select the
+prerelease channel; it is read as stable and a warning is recorded. Choosing
+prerelease stays an explicit action in the app.
+
 Where the session appears depends on the launch environment:
 
 - **GitHub Copilot CLI** — the flags are added to the session that already

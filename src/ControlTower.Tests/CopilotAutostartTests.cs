@@ -738,8 +738,78 @@ public class CopilotAutostartTests : IDisposable
     }
 
     [Fact]
-    public void CopilotTerminal_WithUpdateCheck_RunsUpdateBeforeTheSession()
+    public void Yaml_InRepoPrereleaseChannelIsIgnored()
     {
+        var dir = WriteChannelProject("clonedrepo", "prerelease");
+        Directory.CreateDirectory(Path.Combine(dir, ".git"));
+
+        var result = new ProjectYamlProvider().LoadProject(dir);
+
+        // The channel moves the globally installed CLI, so a copy that can
+        // arrive with a clone is not allowed to choose it.
+        Assert.Equal(CopilotUpdateChannel.Stable, result.Project.Launch.CopilotAutostart.UpdateChannel);
+        Assert.True(result.Project.Launch.CopilotAutostart.CheckForUpdates);
+        Assert.Contains(result.Issues, i => i.Code == "project/copilot-autostart/update-channel");
+    }
+
+    [Fact]
+    public void Yaml_InRepoStableChannelRaisesNoIssue()
+    {
+        var dir = WriteChannelProject("stablerepo", "stable");
+        Directory.CreateDirectory(Path.Combine(dir, ".git"));
+
+        var result = new ProjectYamlProvider().LoadProject(dir);
+
+        Assert.Equal(CopilotUpdateChannel.Stable, result.Project.Launch.CopilotAutostart.UpdateChannel);
+        Assert.DoesNotContain(result.Issues, i => i.Code == "project/copilot-autostart/update-channel");
+    }
+
+    [Fact]
+    public void Yaml_PrereleaseChannelFromTheCentralStoreIsHonoured()
+    {
+        var workingRoot = Path.Combine(_root, "central-working");
+        Directory.CreateDirectory(Path.Combine(workingRoot, ".git"));
+        var metadataRoot = WriteChannelProject("central-metadata", "prerelease");
+
+        var result = new ProjectYamlProvider().LoadProject(workingRoot, metadataRoot);
+
+        Assert.Equal(CopilotUpdateChannel.Prerelease, result.Project.Launch.CopilotAutostart.UpdateChannel);
+        Assert.DoesNotContain(result.Issues, i => i.Code == "project/copilot-autostart/update-channel");
+    }
+
+    [Fact]
+    public void Yaml_LegacyInRepoFallbackCannotSelectPrerelease()
+    {
+        var workingRoot = WriteChannelProject("legacy-working", "prerelease");
+        Directory.CreateDirectory(Path.Combine(workingRoot, ".git"));
+        var emptyStub = Path.Combine(_root, "legacy-stub");
+        Directory.CreateDirectory(emptyStub);
+
+        var result = new ProjectYamlProvider().LoadProject(workingRoot, emptyStub);
+
+        Assert.Equal(CopilotUpdateChannel.Stable, result.Project.Launch.CopilotAutostart.UpdateChannel);
+        Assert.Contains(result.Issues, i => i.Code == "project/copilot-autostart/update-channel");
+    }
+
+    private string WriteChannelProject(string name, string channel)
+    {
+        var dir = Path.Combine(_root, name);
+        Directory.CreateDirectory(Path.Combine(dir, ".controltower"));
+        File.WriteAllText(Path.Combine(dir, ".controltower", "project.yml"), string.Join("\n", new[]
+        {
+            "id: p1",
+            "display_name: Project One",
+            "launch:",
+            "  copilot_autostart:",
+            "    enabled: true",
+            "    check_updates: true",
+            "    update_channel: " + channel
+        }));
+        return dir;
+    }
+
+    [Fact]
+    public void CopilotTerminal_WithUpdateCheck_RunsUpdateBeforeTheSession()    {
         var project = LocalProject();
         project.Launch.Environment = LaunchEnvironmentCatalog.CopilotCliId;
         project.Launch.CopilotAutostart = new CopilotAutostart
