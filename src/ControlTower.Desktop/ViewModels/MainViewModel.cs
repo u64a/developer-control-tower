@@ -581,6 +581,7 @@ namespace ControlTower.Desktop.ViewModels
             "CopilotSessionModeIndex", "CopilotSessionNameVisible", "CopilotSessionName",
             "CopilotAgentModeIndex", "CopilotAgentNameVisible", "CopilotAgentName",
             "CopilotYolo", "CopilotCommandPreview", "CopilotHasError", "CopilotHint",
+            "CopilotCheckUpdates", "CopilotUpdateChannelIndex", "CopilotUpdateChannelVisible",
             "CopilotIntegratedTerminal", "CopilotIntegratedTerminalVisible",
             "CopilotSectionVisible"
         };
@@ -638,22 +639,47 @@ namespace ControlTower.Desktop.ViewModels
             get { return CanConfigureCopilot && CopilotAutostartEnabled; }
         }
 
-        /// <summary>0 = resume the previous session, 1 = start a named session.</summary>
+        /// <summary>0 = resume via the picker, 1 = start a named session, 2 = continue the most recent.</summary>
         public int CopilotSessionModeIndex
         {
-            get { return Autostart != null && Autostart.SessionMode == CopilotSessionMode.Name ? 1 : 0; }
+            get
+            {
+                if (Autostart == null)
+                {
+                    return 0;
+                }
+
+                if (Autostart.SessionMode == CopilotSessionMode.Name)
+                {
+                    return 1;
+                }
+
+                return Autostart.SessionMode == CopilotSessionMode.Continue ? 2 : 0;
+            }
             set
             {
                 var autostart = Autostart;
-                var mode = value == 1 ? CopilotSessionMode.Name : CopilotSessionMode.Resume;
+                var mode = value == 1
+                    ? CopilotSessionMode.Name
+                    : value == 2 ? CopilotSessionMode.Continue : CopilotSessionMode.Resume;
                 if (autostart == null || autostart.SessionMode == mode)
                 {
                     return;
                 }
 
                 autostart.SessionMode = mode;
-                PersistCopilotAutostart("Copilot session: " + (mode == CopilotSessionMode.Name ? "new named session" : "resume"));
+                PersistCopilotAutostart("Copilot session: " + DescribeSessionMode(mode));
             }
+        }
+
+        private static string DescribeSessionMode(CopilotSessionMode mode)
+        {
+            if (mode == CopilotSessionMode.Name)
+            {
+                return "new named session";
+            }
+
+            return mode == CopilotSessionMode.Continue ? "continue most recent" : "resume";
         }
 
         public bool CopilotSessionNameVisible
@@ -721,6 +747,47 @@ namespace ControlTower.Desktop.ViewModels
 
                 autostart.Yolo = value;
                 PersistCopilotAutostart("Copilot --yolo " + (value ? "on" : "off"));
+            }
+        }
+
+        /// <summary>Runs <c>copilot update</c> ahead of the session.</summary>
+        public bool CopilotCheckUpdates
+        {
+            get { return Autostart != null && Autostart.CheckForUpdates; }
+            set
+            {
+                var autostart = Autostart;
+                if (autostart == null || autostart.CheckForUpdates == value)
+                {
+                    return;
+                }
+
+                autostart.CheckForUpdates = value;
+                PersistCopilotAutostart("Copilot update check " + (value ? "on" : "off"));
+            }
+        }
+
+        /// <summary>The channel dropdown only matters once the update check is on.</summary>
+        public bool CopilotUpdateChannelVisible
+        {
+            get { return CopilotOptionsEnabled && CopilotCheckUpdates; }
+        }
+
+        /// <summary>0 = stable, 1 = prerelease.</summary>
+        public int CopilotUpdateChannelIndex
+        {
+            get { return Autostart != null && Autostart.UpdateChannel == CopilotUpdateChannel.Prerelease ? 1 : 0; }
+            set
+            {
+                var autostart = Autostart;
+                var channel = value == 1 ? CopilotUpdateChannel.Prerelease : CopilotUpdateChannel.Stable;
+                if (autostart == null || autostart.UpdateChannel == channel)
+                {
+                    return;
+                }
+
+                autostart.UpdateChannel = channel;
+                PersistCopilotAutostart("Copilot update channel: " + CopilotAutostart.FormatUpdateChannel(channel));
             }
         }
 

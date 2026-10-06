@@ -180,6 +180,8 @@ namespace ControlTower.Infrastructure.Yaml
                             SessionName = sessionName,
                             AgentName = agentName,
                             Yolo = autostart.Yolo,
+                            CheckForUpdates = autostart.CheckUpdates,
+                            UpdateChannel = CopilotAutostart.ParseUpdateChannel(autostart.UpdateChannel),
                             UseIntegratedTerminal = autostart.IntegratedTerminal
                         };
                     }

@@ -66,14 +66,39 @@ project and use the **LAUNCH** card:
 | Option    | Choices                                            | Flag             |
 | --------- | -------------------------------------------------- | ---------------- |
 | Autostart | Off by default; turning it on reveals the rest.     | —                |
-| Session   | Resume previous session (default), or a named one.  | `--resume`, `--name` |
+| Session   | Resume via the picker (default), a named session, or continue the most recent. | `--resume`, `--name`, `--continue` |
 | Agent     | None (default), or a custom agent name.             | `--agent`        |
 | VS Code terminal | Off by default; see below.                  | —                |
 | `--yolo`  | Off by default.                                     | `--yolo`         |
+| Check for updates | Off by default; turning it on reveals the channel. | `update`  |
+| Update channel | Stable (default) or Prerelease.                | `update stable`, `update prerelease` |
 
 The options are saved per project in that project's `project.yml`, so they
 apply again the next time you launch it. A project that has never been
 configured starts nothing, exactly as before.
+
+### Checking for updates before launching
+
+**Check for Copilot updates before launching** downloads a pending update
+first, so a session doesn't start and then immediately tell you an update is
+waiting.
+
+`update` is a subcommand rather than a flag, so it cannot share a command line
+with the session options. It runs as its own command, chained ahead of the
+session:
+
+```
+copilot update stable; copilot --yolo --agent squad --continue
+```
+
+On standalone installations a downloaded version applies at the next launch of
+the CLI — which is the chained session command. The channel is always written
+out, so the command says which channel it used rather than relying on the
+CLI's own default.
+
+The update step never receives the launch environment's own arguments, since
+those are session flags the `update` subcommand would reject. A failed update
+check — being offline, for example — does not stop the session from starting.
 
 Where the session appears depends on the launch environment:
 
@@ -98,11 +123,18 @@ folder, so **Run in VS Code's terminal** generates one:
 
 - `.vscode/tasks.json` is written before the editor starts, with a single
   `Developer Control Tower: Copilot CLI` task using `runOn: folderOpen`.
-- An existing `tasks.json` is merged — only the tool's own label is replaced,
+- With **Check for updates** on, a second
+  `Developer Control Tower: Copilot CLI update` task is written and the
+  session task `dependsOn` it with `dependsOrder: sequence`. A task takes a
+  command plus an argument array rather than a shell line, so the update
+  subcommand cannot be chained onto the session command and runs as its own
+  task instead. Only the session task opens on `folderOpen`; the update task
+  is pulled in as its dependency.
+- An existing `tasks.json` is merged — only the tool's own labels are replaced,
   and a file that cannot be parsed is left untouched and reported.
 - The file is added to `.git/info/exclude`, so it never reaches a commit and
   no tracked `.gitignore` is modified.
-- Clearing the checkbox removes the generated task again.
+- Clearing the checkbox removes the generated tasks again.
 
 Two limits come from VS Code itself. The task runs only when the folder opens
 in a **new** window, so an already-open project just gets focus and no
