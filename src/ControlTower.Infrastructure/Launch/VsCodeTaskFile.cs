@@ -5,6 +5,7 @@ using System.Linq;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using ControlTower.Core.Models;
 
 namespace ControlTower.Infrastructure.Launch
 {
@@ -44,18 +45,26 @@ namespace ControlTower.Infrastructure.Launch
         /// <summary>Identifies the task this tool owns, so user tasks are never touched.</summary>
         public const string TaskLabel = "Developer Control Tower: Copilot CLI";
 
+        /// <summary>
+        /// The <c>copilot update</c> task the session task depends on. A task
+        /// takes a command plus an argument array rather than a shell line, so
+        /// the update subcommand cannot be chained onto the session command and
+        /// runs as its own task instead.
+        /// </summary>
+        public const string UpdateTaskLabel = "Developer Control Tower: Copilot CLI update";
+
         private const string ExcludeEntry = "/.vscode/tasks.json";
 
         /// <summary>
         /// Creates or updates the Copilot task in <paramref name="workspacePath"/>.
         /// An existing tasks.json is merged: every other task is preserved and
-        /// only the tool's own label is replaced. A file that cannot be parsed
+        /// only the tool's own labels are replaced. A file that cannot be parsed
         /// is left untouched rather than overwritten.
         /// </summary>
         public static VsCodeTaskResult Write(
             string workspacePath,
             string command,
-            IReadOnlyList<string> arguments,
+            CopilotLaunchPlan plan,
             bool addGitExclude)
         {
             if (string.IsNullOrWhiteSpace(workspacePath) || !Directory.Exists(workspacePath))
@@ -89,8 +98,26 @@ namespace ControlTower.Infrastructure.Launch
                 root["tasks"] = tasks;
             }
 
-            RemoveOwnTask(tasks);
-            tasks.Add(BuildTask(command, arguments));
+            RemoveOwnTasks(tasks);
+
+            var hasUpdate = plan != null && plan.HasUpdateStep;
+            if (hasUpdate)
+            {
+                var update = BuildTask(UpdateTaskLabel, command, plan.UpdateArguments);
+                update["detail"] = "Downloads the latest Copilot CLI before the session starts.";
+                update["presentation"]["focus"] = false;
+                update.Remove("runOptions");
+                tasks.Add(update);
+            }
+
+            var session = BuildTask(TaskLabel, command, plan?.SessionArguments);
+            if (hasUpdate)
+            {
+                session["dependsOn"] = new JsonArray { UpdateTaskLabel };
+                session["dependsOrder"] = "sequence";
+            }
+
+            tasks.Add(session);
 
             try
             {
@@ -125,7 +152,7 @@ namespace ControlTower.Infrastructure.Launch
                 return;
             }
 
-            if (root["tasks"] is not JsonArray tasks || !RemoveOwnTask(tasks))
+            if (root["tasks"] is not JsonArray tasks || !RemoveOwnTasks(tasks))
             {
                 return;
             }
@@ -180,14 +207,12 @@ namespace ControlTower.Infrastructure.Launch
             }
         }
 
-        private static bool RemoveOwnTask(JsonArray tasks)
+        private static bool RemoveOwnTasks(JsonArray tasks)
         {
             var removed = false;
             for (var i = tasks.Count - 1; i >= 0; i--)
             {
-                if (tasks[i] is JsonObject task &&
-                    task["label"] is JsonValue label &&
-                    string.Equals(label.GetValue<string>(), TaskLabel, StringComparison.Ordinal))
+                if (tasks[i] is JsonObject task && IsOwnLabel(ResolveTaskName(task)))
                 {
                     tasks.RemoveAt(i);
                     removed = true;
@@ -197,7 +222,32 @@ namespace ControlTower.Infrastructure.Launch
             return removed;
         }
 
-        private static JsonObject BuildTask(string command, IReadOnlyList<string> arguments)
+        /// <summary>
+        /// The name VS Code resolves a task by. Schema 2.0.0 uses
+        /// <c>label</c>, but the older <c>taskName</c> is still honoured when
+        /// no label is present, so ownership has to be decided on both. A task
+        /// that claims one of this tool's names by either key is replaced,
+        /// otherwise it could shadow the task <c>dependsOn</c> points at.
+        /// </summary>
+        private static string ResolveTaskName(JsonObject task)
+        {
+            if (task["label"] is JsonValue label && label.TryGetValue<string>(out var labelText))
+            {
+                return labelText;
+            }
+
+            return task["taskName"] is JsonValue name && name.TryGetValue<string>(out var nameText)
+                ? nameText
+                : null;
+        }
+
+        private static bool IsOwnLabel(string label)
+        {
+            return string.Equals(label, TaskLabel, StringComparison.Ordinal) ||
+                   string.Equals(label, UpdateTaskLabel, StringComparison.Ordinal);
+        }
+
+        private static JsonObject BuildTask(string label, string command, IReadOnlyList<string> arguments)
         {
             var args = new JsonArray();
             foreach (var argument in arguments ?? Array.Empty<string>())
@@ -207,7 +257,7 @@ namespace ControlTower.Infrastructure.Launch
 
             return new JsonObject
             {
-                ["label"] = TaskLabel,
+                ["label"] = label,
                 ["detail"] = "Started by Developer Control Tower when this folder opens.",
                 ["type"] = "shell",
                 ["command"] = string.IsNullOrWhiteSpace(command) ? "copilot" : command.Trim(),

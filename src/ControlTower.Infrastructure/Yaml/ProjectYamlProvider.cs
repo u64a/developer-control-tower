@@ -34,6 +34,12 @@ namespace ControlTower.Infrastructure.Yaml
                     metadataPath = legacyPath;
                 }
             }
+
+            // Metadata that sits inside a working tree can arrive with a clone,
+            // so the settings that act on the machine rather than on this
+            // project are not taken at face value below. The central store is
+            // not a working tree, so its copy stays trusted.
+            var metadataIsInRepo = IsInside(workingRootPath, metadataPath) && IsWorkingTree(workingRootPath);
             project.ProjectRootPath = workingRootPath;
             project.MetadataPath = metadataPath;
             project.Locations.LocalPath = workingRootPath;
@@ -173,6 +179,20 @@ namespace ControlTower.Infrastructure.Yaml
                             agentName = string.Empty;
                         }
 
+                        var updateChannel = CopilotAutostart.ParseUpdateChannel(autostart.UpdateChannel);
+                        if (updateChannel != CopilotUpdateChannel.Stable && metadataIsInRepo)
+                        {
+                            // A project.yml that ships inside the repository can
+                            // arrive from a clone, so it is not allowed to move
+                            // the globally installed CLI off the stable channel.
+                            // Switching channels stays an explicit user action.
+                            result.Issues.Add(new ValidationIssue(
+                                IssueSeverity.Warning,
+                                "project/copilot-autostart/update-channel",
+                                "launch.copilot_autostart.update_channel was ignored because it comes from the repository; the stable channel was used instead."));
+                            updateChannel = CopilotUpdateChannel.Stable;
+                        }
+
                         project.Launch.CopilotAutostart = new CopilotAutostart
                         {
                             Enabled = autostart.Enabled,
@@ -180,6 +200,8 @@ namespace ControlTower.Infrastructure.Yaml
                             SessionName = sessionName,
                             AgentName = agentName,
                             Yolo = autostart.Yolo,
+                            CheckForUpdates = autostart.CheckUpdates,
+                            UpdateChannel = updateChannel,
                             UseIntegratedTerminal = autostart.IntegratedTerminal
                         };
                     }
@@ -273,6 +295,48 @@ namespace ControlTower.Infrastructure.Yaml
             }
 
             return result;
+        }
+
+        /// <summary>
+        /// Whether <paramref name="path"/> sits inside <paramref name="root"/>.
+        /// Used to tell metadata this tool owns from a copy that travelled with
+        /// a clone.
+        /// </summary>
+        private static bool IsInside(string root, string path)
+        {
+            if (string.IsNullOrWhiteSpace(root) || string.IsNullOrWhiteSpace(path))
+            {
+                return false;
+            }
+
+            try
+            {
+                var full = Path.GetFullPath(path);
+                var basePath = Path.GetFullPath(root)
+                    .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                return full.StartsWith(basePath + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+            }
+            catch (Exception ex) when (ex is ArgumentException || ex is NotSupportedException || ex is PathTooLongException)
+            {
+                // An unusable path cannot be shown to be tool-owned.
+                return true;
+            }
+        }
+
+        /// <summary>
+        /// Whether <paramref name="path"/> is a Git working tree. A worktree or
+        /// submodule carries a <c>.git</c> file rather than a directory, so both
+        /// are checked.
+        /// </summary>
+        private static bool IsWorkingTree(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                return false;
+            }
+
+            var git = Path.Combine(path, ".git");
+            return Directory.Exists(git) || File.Exists(git);
         }
     }
 }

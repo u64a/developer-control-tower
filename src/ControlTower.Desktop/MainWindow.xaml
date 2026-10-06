@@ -535,8 +535,9 @@
                             <ComboBox SelectedIndex="{Binding CopilotSessionModeIndex, Mode=TwoWay}"
                                       AutomationProperties.Name="Copilot session mode"
                                       Margin="0,2,0,6">
-                                <ComboBoxItem Content="Resume previous session" />
+                                <ComboBoxItem Content="Resume previous session (picker)" />
                                 <ComboBoxItem Content="New named session" />
+                                <ComboBoxItem Content="Continue most recent session" />
                             </ComboBox>
                             <TextBox Text="{Binding CopilotSessionName, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
                                      Visibility="{Binding CopilotSessionNameVisible, Converter={StaticResource BoolToVis}}"
@@ -569,6 +570,23 @@
                                       AutomationProperties.Name="Copilot yolo mode"
                                       ToolTip="Runs Copilot CLI without per-action confirmation prompts."
                                       Margin="0,0,0,6" />
+
+                            <CheckBox IsChecked="{Binding CopilotCheckUpdates, Mode=TwoWay}"
+                                      Content="Check for Copilot updates before launching"
+                                      AutomationProperties.Name="Check for Copilot updates before launching"
+                                      ToolTip="Runs 'copilot update' first, so a pending update is downloaded before the session starts instead of prompting you once you are in it."
+                                      Margin="0,0,0,6" />
+
+                            <StackPanel Visibility="{Binding CopilotUpdateChannelVisible, Converter={StaticResource BoolToVis}}"
+                                        Margin="22,0,0,6">
+                                <TextBlock Text="Update channel" Style="{StaticResource CaptionTextStyle}" />
+                                <ComboBox SelectedIndex="{Binding CopilotUpdateChannelIndex, Mode=TwoWay}"
+                                          AutomationProperties.Name="Copilot update channel"
+                                          Margin="0,2,0,0">
+                                    <ComboBoxItem Content="Stable" />
+                                    <ComboBoxItem Content="Prerelease" />
+                                </ComboBox>
+                            </StackPanel>
 
                             <TextBlock Text="{Binding CopilotCommandPreview}"
                                        FontFamily="{StaticResource MonoFontFamily}"

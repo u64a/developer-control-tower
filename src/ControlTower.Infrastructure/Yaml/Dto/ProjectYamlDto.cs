@@ -101,6 +101,12 @@ namespace ControlTower.Infrastructure.Yaml.Dto
         [YamlMember(Alias = "yolo")]
         public bool Yolo { get; set; }
 
+        [YamlMember(Alias = "check_updates")]
+        public bool CheckUpdates { get; set; }
+
+        [YamlMember(Alias = "update_channel")]
+        public string UpdateChannel { get; set; }
+
         [YamlMember(Alias = "integrated_terminal")]
         public bool IntegratedTerminal { get; set; }
     }

@@ -426,6 +426,8 @@ namespace ControlTower.Infrastructure.Registration
                 lines.Add("    session_name: " + EscapeScalar(autostart.SessionName));
                 lines.Add("    agent: " + EscapeScalar(autostart.AgentName));
                 lines.Add("    yolo: " + (autostart.Yolo ? "true" : "false"));
+                lines.Add("    check_updates: " + (autostart.CheckForUpdates ? "true" : "false"));
+                lines.Add("    update_channel: " + CopilotAutostart.FormatUpdateChannel(autostart.UpdateChannel));
                 lines.Add("    integrated_terminal: " + (autostart.UseIntegratedTerminal ? "true" : "false"));
             }
 
