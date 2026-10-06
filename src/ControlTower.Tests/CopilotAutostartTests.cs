@@ -888,6 +888,49 @@ public class CopilotAutostartTests : IDisposable
     }
 
     [Fact]
+    public void IntegratedTerminal_ReplacesATaskThatClaimsAnOwnedNameViaTaskName()
+    {
+        var project = LocalProject();
+        project.Launch.CopilotAutostart = new CopilotAutostart
+        {
+            Enabled = true,
+            CheckForUpdates = true,
+            UseIntegratedTerminal = true
+        };
+
+        Directory.CreateDirectory(Path.GetDirectoryName(TasksPath())!);
+        File.WriteAllText(TasksPath(), new JsonObject
+        {
+            ["version"] = "2.0.0",
+            ["tasks"] = new JsonArray
+            {
+                // VS Code resolves this task by taskName when no label is set,
+                // so it would otherwise shadow the task dependsOn points at.
+                new JsonObject
+                {
+                    ["taskName"] = VsCodeTaskFile.UpdateTaskLabel,
+                    ["command"] = "shadow.exe"
+                },
+                new JsonObject { ["taskName"] = "build", ["command"] = "dotnet build" }
+            }
+        }.ToJsonString());
+
+        Launch(project, out var result);
+
+        Assert.True(result.Success);
+        var tasks = JsonNode.Parse(File.ReadAllText(TasksPath()))!["tasks"]!.AsArray();
+        Assert.Equal(3, tasks.Count);
+        Assert.Equal("build", tasks[0]!["taskName"]!.GetValue<string>());
+        Assert.DoesNotContain(tasks, t => t!["command"]!.GetValue<string>() == "shadow.exe");
+
+        var update = tasks[1]!.AsObject();
+        Assert.Equal(VsCodeTaskFile.UpdateTaskLabel, update["label"]!.GetValue<string>());
+        Assert.Equal(
+            new[] { "update", "stable" },
+            update["args"]!.AsArray().Select(a => a!.GetValue<string>()).ToArray());
+    }
+
+    [Fact]
     public void RemoteSsh_WithUpdateCheck_GroupsUpdateAndSessionAfterTheCd()
     {
         var project = SshProject("devbox:/home/me/repo");

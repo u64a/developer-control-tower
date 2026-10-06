@@ -212,9 +212,7 @@ namespace ControlTower.Infrastructure.Launch
             var removed = false;
             for (var i = tasks.Count - 1; i >= 0; i--)
             {
-                if (tasks[i] is JsonObject task &&
-                    task["label"] is JsonValue label &&
-                    IsOwnLabel(label.GetValue<string>()))
+                if (tasks[i] is JsonObject task && IsOwnLabel(ResolveTaskName(task)))
                 {
                     tasks.RemoveAt(i);
                     removed = true;
@@ -222,6 +220,25 @@ namespace ControlTower.Infrastructure.Launch
             }
 
             return removed;
+        }
+
+        /// <summary>
+        /// The name VS Code resolves a task by. Schema 2.0.0 uses
+        /// <c>label</c>, but the older <c>taskName</c> is still honoured when
+        /// no label is present, so ownership has to be decided on both. A task
+        /// that claims one of this tool's names by either key is replaced,
+        /// otherwise it could shadow the task <c>dependsOn</c> points at.
+        /// </summary>
+        private static string ResolveTaskName(JsonObject task)
+        {
+            if (task["label"] is JsonValue label && label.TryGetValue<string>(out var labelText))
+            {
+                return labelText;
+            }
+
+            return task["taskName"] is JsonValue name && name.TryGetValue<string>(out var nameText)
+                ? nameText
+                : null;
         }
 
         private static bool IsOwnLabel(string label)
