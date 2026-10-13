@@ -803,6 +803,21 @@ namespace ControlTower.Desktop
                 }
             };
             moveToGroup.Items.Add(newGroup);
+
+            if (ArchiveGroup.Matches(project.Group))
+            {
+                menu.Items.Add(new System.Windows.Controls.Separator());
+                var setArchivePath = new System.Windows.Controls.MenuItem { Header = "Set archive path…" };
+                setArchivePath.Click += (_, _) =>
+                {
+                    var dlg = new SetArchivePathDialog(project.ArchivePathOverride) { Owner = this };
+                    if (dlg.ShowDialog() == true)
+                    {
+                        _viewModel.SetProjectArchivePath(project, dlg.ArchivePath);
+                    }
+                };
+                menu.Items.Add(setArchivePath);
+            }
         }
 
         private void AddLaunchEnvironmentMenus(System.Windows.Controls.ContextMenu menu, ProjectOverview project)

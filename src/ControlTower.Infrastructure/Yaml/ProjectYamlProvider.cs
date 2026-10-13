@@ -91,6 +91,22 @@ namespace ControlTower.Infrastructure.Yaml
                     project.Group = dto.Group.Trim();
                 }
 
+                if (dto.Archive != null && !string.IsNullOrWhiteSpace(dto.Archive.Path))
+                {
+                    if (ControlTower.Infrastructure.Configuration.AllowedSettingsRoots.IsUnderAllowedRoot(
+                        dto.Archive.Path, ControlTower.Infrastructure.Configuration.AllowedSettingsRoots.GetAllowedRoots()))
+                    {
+                        project.ArchivePath = dto.Archive.Path.Trim();
+                    }
+                    else
+                    {
+                        result.Issues.Add(new ValidationIssue(
+                            IssueSeverity.Warning,
+                            "project/archive/path-outside-allowed-roots",
+                            $"Ignored project archive path '{dto.Archive.Path}' — outside allowed user-local roots."));
+                    }
+                }
+
                 if (dto.Planning != null)
                 {
                     if (!string.IsNullOrWhiteSpace(dto.Planning.Authority))

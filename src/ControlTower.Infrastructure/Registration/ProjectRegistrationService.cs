@@ -80,6 +80,17 @@ namespace ControlTower.Infrastructure.Registration
                 };
             }
 
+            if (!string.IsNullOrWhiteSpace(request.ArchivePath) &&
+                !ControlTower.Infrastructure.Configuration.AllowedSettingsRoots.IsUnderAllowedRoot(
+                    request.ArchivePath, ControlTower.Infrastructure.Configuration.AllowedSettingsRoots.GetAllowedRoots()))
+            {
+                return new ProjectRegistrationResult
+                {
+                    Success = false,
+                    Message = "Archive path must resolve under a user-local folder (LocalAppData, RoamingAppData, your user profile, or OneDrive)."
+                };
+            }
+
             var projectId = string.IsNullOrWhiteSpace(request.ProjectId)
                 ? BuildProjectId(request.DisplayName)
                 : request.ProjectId.Trim();
@@ -394,6 +405,16 @@ namespace ControlTower.Infrastructure.Registration
             {
                 lines.Add("group: " + EscapeScalar(request.Group.Trim()));
             }
+
+            var archivePath = request.ArchivePath == null
+                ? existingProject?.ArchivePath
+                : request.ArchivePath.Trim();
+            if (!string.IsNullOrWhiteSpace(archivePath))
+            {
+                lines.Add("archive:");
+                lines.Add("  path: " + EscapeScalar(archivePath));
+            }
+
             lines.Add(string.Empty);
             lines.Add("planning:");
             lines.Add("  authority: " + EscapeScalar(authority));

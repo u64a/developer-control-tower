@@ -118,6 +118,13 @@ namespace ControlTower.Core.Models
         /// </summary>
         public string ArchiveStatus { get; set; } = string.Empty;
 
+        /// <summary>
+        /// Per-project Archive storage root override (see
+        /// <see cref="ProjectDefinition.ArchivePath"/>). Empty means the
+        /// global archive.storage_root setting is used.
+        /// </summary>
+        public string ArchivePathOverride { get; set; } = string.Empty;
+
         public string PlanningAuthority { get; set; }
 
         public string SourcePath { get; set; }
