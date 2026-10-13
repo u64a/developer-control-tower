@@ -619,6 +619,37 @@ namespace ControlTower.Desktop.ViewModels
             }
         }
 
+        /// <summary>
+        /// Persists a per-project Archive storage root override in its
+        /// project.yml. Empty clears it, falling back to the global
+        /// archive.storage_root setting.
+        /// </summary>
+        public void SetProjectArchivePath(ProjectOverview project, string archivePath)
+        {
+            if (project == null) return;
+
+            var def = _service.GetProjectDefinition(new ProjectRef { Id = project.Id, Path = project.SourcePath });
+            if (def == null)
+            {
+                StatusMessage = "Could not load project to update.";
+                return;
+            }
+
+            var request = BuildRequestFromDefinition(def, project.SourcePath);
+            request.ArchivePath = archivePath ?? string.Empty;
+
+            var result = _service.RegisterProject(request);
+            StatusMessage = result.Success
+                ? project.DisplayName + " archive path set to " +
+                  (string.IsNullOrWhiteSpace(request.ArchivePath) ? "(default)" : request.ArchivePath)
+                : result.Message;
+            if (result.Success)
+            {
+                Load();
+                ApplyProjectView(def.Id);
+            }
+        }
+
         // ------------------------------------------------- copilot autostart
 
         private static readonly string[] CopilotProperties =
@@ -1457,13 +1488,14 @@ namespace ControlTower.Desktop.ViewModels
 
         public async Task RunArchiveSyncAsync()
         {
-            if (ArchiveSyncService == null || string.IsNullOrWhiteSpace(ArchiveStorageRootPath))
+            if (ArchiveSyncService == null)
             {
                 return;
             }
 
             var targets = _allProjects
-                .Where(p => ArchiveGroup.Matches(p.Group) && !string.IsNullOrWhiteSpace(p.RemoteUrl))
+                .Where(p => ArchiveGroup.Matches(p.Group) && !string.IsNullOrWhiteSpace(p.RemoteUrl) &&
+                            (!string.IsNullOrWhiteSpace(ArchiveStorageRootPath) || !string.IsNullOrWhiteSpace(p.ArchivePathOverride)))
                 .ToList();
 
             if (targets.Count == 0)
@@ -1488,7 +1520,10 @@ namespace ControlTower.Desktop.ViewModels
                         ArchiveSyncStatusText = $"{project.DisplayName ?? project.Id}: {message}";
                     });
 
-                    var request = new ArchiveSyncRequest(project.Id, project.RemoteUrl, ArchiveStorageRootPath);
+                    var storageRoot = string.IsNullOrWhiteSpace(project.ArchivePathOverride)
+                        ? ArchiveStorageRootPath
+                        : project.ArchivePathOverride;
+                    var request = new ArchiveSyncRequest(project.Id, project.RemoteUrl, storageRoot);
 
                     try
                     {
