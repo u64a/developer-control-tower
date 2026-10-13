@@ -188,6 +188,7 @@
                             <ColumnDefinition Width="1.1*" />
                             <ColumnDefinition Width="104" />
                             <ColumnDefinition Width="92" />
+                            <ColumnDefinition Width="108" />
                         </Grid.ColumnDefinitions>
                         <CheckBox Grid.Column="0"
                                   VerticalAlignment="Center"
@@ -199,6 +200,7 @@
                         <TextBlock Grid.Column="5" Text="BRANCH" Style="{StaticResource MonoLabelStyle}" />
                         <TextBlock Grid.Column="6" Text="TREE" Style="{StaticResource MonoLabelStyle}" />
                         <TextBlock Grid.Column="7" Text="SYNC" Style="{StaticResource MonoLabelStyle}" />
+                        <TextBlock Grid.Column="8" Text="ARCHIVE" Style="{StaticResource MonoLabelStyle}" />
                     </Grid>
 
                     <Border DockPanel.Dock="Bottom"
@@ -335,6 +337,7 @@
                                         <ColumnDefinition Width="1.1*" />
                                         <ColumnDefinition Width="104" />
                                         <ColumnDefinition Width="92" />
+                                        <ColumnDefinition Width="108" />
                                     </Grid.ColumnDefinitions>
                                     <CheckBox Grid.Column="0"
                                               VerticalAlignment="Center"
@@ -384,6 +387,7 @@
                                     <TextBlock Grid.Column="5" Text="{Binding Project.Branch}" VerticalAlignment="Center" FontFamily="{StaticResource MonoFontFamily}" FontSize="11.5" Margin="0,0,8,0" TextTrimming="CharacterEllipsis" Foreground="{DynamicResource SecondaryTextBrush}" />
                                     <TextBlock Grid.Column="6" Text="{Binding Project.WorkingTreeStatus}" VerticalAlignment="Center" FontFamily="{StaticResource MonoFontFamily}" FontSize="11.5" TextTrimming="CharacterEllipsis" Foreground="{Binding Project.WorkingTreeStatus, Converter={StaticResource TreeToBrush}}" />
                                     <TextBlock Grid.Column="7" Text="{Binding Project.SyncCompact}" VerticalAlignment="Center" FontFamily="{StaticResource MonoFontFamily}" FontSize="11.5" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" Foreground="{Binding Project, Converter={StaticResource SyncToBrush}}" />
+                                    <TextBlock Grid.Column="8" Text="{Binding Project.ArchiveStatus}" VerticalAlignment="Center" FontFamily="{StaticResource MonoFontFamily}" FontSize="11.5" TextTrimming="CharacterEllipsis" Foreground="{DynamicResource SecondaryTextBrush}" />
 
                                     <StackPanel x:Name="rowActions" Grid.Column="3" Grid.ColumnSpan="5"
                                                 Orientation="Horizontal"
@@ -691,6 +695,26 @@
                              Margin="12,0,0,0"
                              VerticalAlignment="Center"
                              Visibility="{Binding IsBusy, Converter={StaticResource BoolToVisibility}}" />
+                <StackPanel DockPanel.Dock="Right"
+                            Orientation="Horizontal"
+                            VerticalAlignment="Center"
+                            Margin="12,0,0,0"
+                            Visibility="{Binding ArchiveSyncActive, Converter={StaticResource BoolToVisibility}}">
+                    <TextBlock Text="{Binding ArchiveSyncStatusText}"
+                               FontFamily="{StaticResource MonoFontFamily}"
+                               FontSize="11"
+                               Foreground="{DynamicResource SecondaryTextBrush}"
+                               TextTrimming="CharacterEllipsis"
+                               MaxWidth="260"
+                               VerticalAlignment="Center" />
+                    <ProgressBar Width="120"
+                                 Height="6"
+                                 Margin="8,0,0,0"
+                                 VerticalAlignment="Center"
+                                 Minimum="0"
+                                 Maximum="100"
+                                 Value="{Binding ArchiveSyncProgressPercent, Mode=OneWay}" />
+                </StackPanel>
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                     <TextBlock Text="{Binding PortfolioSummaryLine}"
                                FontFamily="{StaticResource MonoFontFamily}"

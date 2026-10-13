@@ -111,6 +111,13 @@ namespace ControlTower.Core.Models
         /// <summary>Organisational folder the project sits in; "Ungrouped" by default.</summary>
         public string Group { get; set; }
 
+        /// <summary>
+        /// Archive safety-net sync status for display (e.g. "Synced",
+        /// "Pending", "Upstream gone"). Empty for any project not in the
+        /// reserved "Archive" group.
+        /// </summary>
+        public string ArchiveStatus { get; set; } = string.Empty;
+
         public string PlanningAuthority { get; set; }
 
         public string SourcePath { get; set; }
