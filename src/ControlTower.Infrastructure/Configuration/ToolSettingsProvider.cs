@@ -331,6 +331,21 @@ namespace ControlTower.Infrastructure.Configuration
                     }
                 }
 
+                if (dto?.Archive != null && !string.IsNullOrWhiteSpace(dto.Archive.StorageRoot))
+                {
+                    if (IsAllowedConfiguredPath(dto.Archive.StorageRoot))
+                    {
+                        settings.ArchiveStorageRootPath = dto.Archive.StorageRoot;
+                    }
+                    else
+                    {
+                        settings.Issues.Add(new ValidationIssue(
+                            IssueSeverity.Warning,
+                            "settings/path/outside-allowed-roots",
+                            $"Ignored archive storage_root '{dto.Archive.StorageRoot}' — outside allowed user-local roots."));
+                    }
+                }
+
                 if (dto?.Updates != null)
                 {
                     var current = settings.UpdateOptions ?? UpdateOptions.Defaults();

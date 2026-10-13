@@ -12,7 +12,6 @@ using ControlTower.Core.UseCases;
 using ControlTower.Infrastructure.Diagnostics;
 using ControlTower.Infrastructure.Launch;
 using ControlTower.Infrastructure.Theme;
-
 namespace ControlTower.Desktop.ViewModels
 {
     public sealed class MainViewModel : ObservableObject
@@ -48,6 +47,16 @@ namespace ControlTower.Desktop.ViewModels
         // and force them to keep using Open Code RunAs Admin. This is a known
         // VS Code limitation, not something we can work around per-project.
         private bool _codeAdminLatched;
+
+        // Archive sync (reserved "Archive" project group safety-net).
+        // Both are set by MainWindow after session construction — null/empty
+        // means the feature is unconfigured and RunArchiveSyncAsync no-ops.
+        public IArchiveSyncService ArchiveSyncService { get; set; }
+        public IArchiveStateStore ArchiveStateStore { get; set; }
+        public string ArchiveStorageRootPath { get; set; }
+        private bool _archiveSyncActive;
+        private string _archiveSyncStatusText;
+        private double _archiveSyncProgressPercent;
 
         public MainViewModel(ControlTowerService service)
             : this(service, null, null, null)
@@ -341,6 +350,43 @@ namespace ControlTower.Desktop.ViewModels
                 }
 
                 _isBusy = value;
+                OnPropertyChanged();
+            }
+        }
+
+        /// <summary>True while an archive sync pass is running; drives the bottom status bar progress bar.</summary>
+        public bool ArchiveSyncActive
+        {
+            get { return _archiveSyncActive; }
+            set
+            {
+                if (_archiveSyncActive == value)
+                {
+                    return;
+                }
+
+                _archiveSyncActive = value;
+                OnPropertyChanged();
+            }
+        }
+
+        public string ArchiveSyncStatusText
+        {
+            get { return _archiveSyncStatusText; }
+            set
+            {
+                _archiveSyncStatusText = value;
+                OnPropertyChanged();
+            }
+        }
+
+        /// <summary>0-100 completion percentage across all archived projects in the current pass.</summary>
+        public double ArchiveSyncProgressPercent
+        {
+            get { return _archiveSyncProgressPercent; }
+            set
+            {
+                _archiveSyncProgressPercent = value;
                 OnPropertyChanged();
             }
         }
@@ -1025,6 +1071,7 @@ namespace ControlTower.Desktop.ViewModels
             var items = _service.LoadPortfolio();
             foreach (var item in items)
             {
+                ApplyArchiveStatus(item);
                 _allProjects.Add(item);
             }
 
@@ -1066,6 +1113,7 @@ namespace ControlTower.Desktop.ViewModels
                 _allProjects.Clear();
                 foreach (var item in items.Items)
                 {
+                    ApplyArchiveStatus(item);
                     _allProjects.Add(item);
                 }
 
@@ -1255,10 +1303,22 @@ namespace ControlTower.Desktop.ViewModels
         {
             get
             {
-                return _allProjects
+                var groups = _allProjects
                     .Select(p => p.Group)
                     .Where(g => !string.IsNullOrWhiteSpace(g) && !string.Equals(g, "Ungrouped", StringComparison.OrdinalIgnoreCase))
                     .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
+                // "Archive" is a reserved group (local safety-net for forked
+                // repos) and must always be offered, even before any project
+                // has been moved into it — same as "Ungrouped" is always
+                // offered regardless of current membership.
+                if (!groups.Any(g => ArchiveGroup.Matches(g)))
+                {
+                    groups.Add(ArchiveGroup.Name);
+                }
+
+                return groups
                     .OrderBy(g => g, StringComparer.OrdinalIgnoreCase)
                     .ToList();
             }
@@ -1343,8 +1403,130 @@ namespace ControlTower.Desktop.ViewModels
             OnPropertyChanged("PortfolioSummaryLine");
         }
 
+        /// <summary>
+        /// One-shot background sync of every project in the reserved
+        /// "Archive" group: full clone/fetch + verified latest-release
+        /// capture against each project's own remote. No-ops silently when
+        /// the feature isn't configured (no storage root / service) or no
+        /// project currently carries the Archive group. Never blocks
+        /// startup and never deletes a local archive on failure — failures
+        /// are surfaced via <see cref="ArchiveRepoState"/>, not thrown.
+        /// </summary>
+        /// <summary>
+        /// Sets <see cref="ProjectOverview.ArchiveStatus"/> from persisted
+        /// <see cref="ArchiveRepoState"/> for display. No-ops (leaves it
+        /// blank) for any project outside the reserved "Archive" group, or
+        /// when the feature isn't configured.
+        /// </summary>
+        private void ApplyArchiveStatus(ProjectOverview project)
+        {
+            if (project == null || !ArchiveGroup.Matches(project.Group))
+            {
+                return;
+            }
+
+            if (ArchiveStateStore == null)
+            {
+                project.ArchiveStatus = "Not configured";
+                return;
+            }
+
+            var state = ArchiveStateStore.Load(project.Id);
+            project.ArchiveStatus = DescribeArchiveStatus(state);
+        }
+
+        private static string DescribeArchiveStatus(ArchiveRepoState state)
+        {
+            if (state == null || string.IsNullOrWhiteSpace(state.ArchivePath))
+            {
+                return "Pending";
+            }
+
+            if (state.UpstreamStatus == ArchiveUpstreamStatus.Unavailable)
+            {
+                return "Upstream gone";
+            }
+
+            if (!string.IsNullOrWhiteSpace(state.LastError))
+            {
+                return "Error";
+            }
+
+            return "Synced";
+        }
+
+        public async Task RunArchiveSyncAsync()
+        {
+            if (ArchiveSyncService == null || string.IsNullOrWhiteSpace(ArchiveStorageRootPath))
+            {
+                return;
+            }
+
+            var targets = _allProjects
+                .Where(p => ArchiveGroup.Matches(p.Group) && !string.IsNullOrWhiteSpace(p.RemoteUrl))
+                .ToList();
+
+            if (targets.Count == 0)
+            {
+                return;
+            }
+
+            ArchiveSyncActive = true;
+            var succeeded = 0;
+            var failed = 0;
+
+            try
+            {
+                for (var i = 0; i < targets.Count; i++)
+                {
+                    var project = targets[i];
+                    ArchiveSyncProgressPercent = targets.Count == 0 ? 0 : (i * 100.0) / targets.Count;
+                    ArchiveSyncStatusText = $"Archiving {i + 1}/{targets.Count} \u2014 {project.DisplayName ?? project.Id}";
+
+                    var progress = new Progress<string>(message =>
+                    {
+                        ArchiveSyncStatusText = $"{project.DisplayName ?? project.Id}: {message}";
+                    });
+
+                    var request = new ArchiveSyncRequest(project.Id, project.RemoteUrl, ArchiveStorageRootPath);
+
+                    try
+                    {
+                        var result = await ArchiveSyncService.SyncAsync(request, progress, CancellationToken.None);
+                        if (result.Status == ArchiveSyncStatus.Succeeded || result.Status == ArchiveSyncStatus.UpstreamUnavailable)
+                        {
+                            succeeded++;
+                        }
+                        else
+                        {
+                            failed++;
+                        }
+                    }
+                    catch
+                    {
+                        // One repo failing to archive must not abort the rest of the pass.
+                        failed++;
+                    }
+                    finally
+                    {
+                        ApplySeededProject(project);
+                    }
+                }
+            }
+            finally
+            {
+                ArchiveSyncProgressPercent = 100;
+                ArchiveSyncStatusText = failed == 0
+                    ? $"Archive sync complete \u2014 {succeeded} repo(s) up to date"
+                    : $"Archive sync complete \u2014 {succeeded} ok, {failed} failed";
+                ArchiveSyncActive = false;
+            }
+        }
+
         private void ApplySeededProject(ProjectOverview refreshed)
         {
+            ApplyArchiveStatus(refreshed);
+
             for (var i = 0; i < _allProjects.Count; i++)
             {
                 if (string.Equals(_allProjects[i].Id, refreshed.Id, StringComparison.OrdinalIgnoreCase))
