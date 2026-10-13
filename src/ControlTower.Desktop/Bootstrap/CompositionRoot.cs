@@ -7,6 +7,7 @@ using ControlTower.Core.Contracts;
 using ControlTower.Core.Models;
 using ControlTower.Core.UseCases;
 using ControlTower.Infrastructure.Cache;
+using ControlTower.Infrastructure.Archive;
 using ControlTower.Infrastructure.Configuration;
 using ControlTower.Infrastructure.Credentials;
 using ControlTower.Infrastructure.Diagnostics;
@@ -186,6 +187,24 @@ namespace ControlTower.Desktop.Bootstrap
             var workspaceInspector = new GitWorkspaceInspector(gitAdapter);
             var cloneService = new AsyncCloneService(gitAdapter);
             var quarantineService = new QuarantineService();
+
+            // Archive wiring: read-only safety-net sync for the reserved
+            // "Archive" project group. Only built when a storage root is
+            // configured — the feature is opt-in via settings.yml.
+            IArchiveSyncService archiveSyncService = null;
+            IArchiveStateStore archiveStateStore = null;
+            if (!string.IsNullOrWhiteSpace(settings.ArchiveStorageRootPath))
+            {
+                var gitHubToken = !string.IsNullOrWhiteSpace(settings.GitHubCredentialTarget)
+                    ? CredentialStore.GetPassword(settings.GitHubCredentialTarget)
+                    : string.Empty;
+                archiveStateStore = new ArchiveStateStore(LocalStateRoot);
+                archiveSyncService = new ArchiveSyncService(
+                    gitAdapter,
+                    cloneService,
+                    archiveStateStore,
+                    new GitHubReleaseClient(gitHubToken));
+            }
             var missingScanner = new MissingProjectScanner(workspaceInspector);
             var restoreOrchestrator = new RestoreOrchestrator(
                 cloneService, quarantineService, GitOperationLock);
@@ -267,7 +286,10 @@ namespace ControlTower.Desktop.Bootstrap
                 profileManager,
                 profileState)
             {
-                LaunchEnvironments = settings.LaunchEnvironments ?? LaunchEnvironmentCatalog.CreateDefault(settings.VsCodeCommand)
+                LaunchEnvironments = settings.LaunchEnvironments ?? LaunchEnvironmentCatalog.CreateDefault(settings.VsCodeCommand),
+                ArchiveSyncService = archiveSyncService,
+                ArchiveStateStore = archiveStateStore,
+                ArchiveStorageRootPath = settings.ArchiveStorageRootPath ?? string.Empty
             };
         }
 
@@ -400,5 +422,21 @@ namespace ControlTower.Desktop.Bootstrap
 
         /// <summary>Effective launch environments and global default from settings.</summary>
         public LaunchEnvironmentCatalog LaunchEnvironments { get; init; } = LaunchEnvironmentCatalog.CreateDefault();
+
+        /// <summary>
+        /// Read-only archive sync service for the reserved "Archive" project
+        /// group. Null when no archive storage root is configured.
+        /// </summary>
+        public IArchiveSyncService ArchiveSyncService { get; init; }
+
+        /// <summary>
+        /// Read-only accessor for persisted per-project archive state, used
+        /// by the UI to show archive sync status without re-syncing. Null
+        /// when no archive storage root is configured.
+        /// </summary>
+        public IArchiveStateStore ArchiveStateStore { get; init; }
+
+        /// <summary>Configured storage root for archive clones. Empty disables the feature.</summary>
+        public string ArchiveStorageRootPath { get; init; } = string.Empty;
     }
 }
