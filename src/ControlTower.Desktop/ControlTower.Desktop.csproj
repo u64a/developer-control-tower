@@ -97,6 +97,8 @@
           Condition="Exists('$(MSBuildThisFileDirectory)..\..\.git')">
     <Exec Command="git rev-parse --short HEAD"
           ConsoleToMSBuild="true"
+          StandardOutputImportance="Low"
+          StandardErrorImportance="Low"
           IgnoreExitCode="true"
           ContinueOnError="true">
       <Output TaskParameter="ConsoleOutput" PropertyName="GitShortSha" />
