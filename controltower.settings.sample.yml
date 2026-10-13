@@ -19,6 +19,10 @@ security:
 # "Archive" (case-insensitive) get a full clone kept here, refreshed on
 # launch, and never deleted locally even if the upstream GitHub repo
 # disappears (e.g. a DMCA takedown). Leave empty to disable archiving.
+# A project can override this with its own storage root via the
+# project row's right-click "Set archive path..." menu (stored as
+# archive.path in that project's project.yml); blank there falls back
+# to this profile-wide default.
 archive:
   storage_root:
 
