@@ -163,9 +163,9 @@ namespace ControlTower.Infrastructure.Launch
         /// project has not opted in. Returns false with a rejection when the
         /// configured options cannot be turned into a command line.
         /// </summary>
-        private static bool TryResolveAutostart(ProjectDefinition project, LaunchEnvironment environment, out IReadOnlyList<string> tokens, out LaunchResult rejection)
+        private static bool TryResolveAutostart(ProjectDefinition project, LaunchEnvironment environment, out CopilotLaunchPlan plan, out LaunchResult rejection)
         {
-            tokens = null;
+            plan = null;
             rejection = null;
 
             var autostart = project.Launch?.CopilotAutostart;
@@ -174,13 +174,13 @@ namespace ControlTower.Infrastructure.Launch
                 return true;
             }
 
-            if (!autostart.TryBuildArguments(out var built, out var error))
+            if (!autostart.TryBuildPlan(out var built, out var error))
             {
                 rejection = LaunchResult.Rejected("launch/rejected/copilot-autostart", error);
                 return false;
             }
 
-            tokens = built;
+            plan = built;
             return true;
         }
 
@@ -214,14 +214,14 @@ namespace ControlTower.Infrastructure.Launch
                 return false;
             }
 
-            if (!autostart.TryBuildArguments(out var tokens, out var error))
+            if (!autostart.TryBuildPlan(out var plan, out var error))
             {
                 note = ". Copilot CLI not started: " + error;
                 return true;
             }
 
             var environment = CopilotEnvironment();
-            var written = VsCodeTaskFile.Write(path, environment.Command, tokens, true);
+            var written = VsCodeTaskFile.Write(path, environment.Command, plan, true);
             note = written.Success
                 ? " and queued " + autostart.Describe(environment.Command) + " in its terminal"
                 : ". Copilot CLI not started: " + written.Error;
@@ -244,7 +244,7 @@ namespace ControlTower.Infrastructure.Launch
                 return editorResult;
             }
 
-            if (!autostart.TryBuildArguments(out var tokens, out var error))
+            if (!autostart.TryBuildPlan(out var plan, out var error))
             {
                 return LaunchResult.Ok(editorResult.Message + ". Copilot CLI not started: " + error);
             }
@@ -252,7 +252,7 @@ namespace ControlTower.Infrastructure.Launch
             var environment = CopilotEnvironment();
             try
             {
-                StartTerminal(environment, project, BuildLocalTerminalScript(path, environment, tokens), path, string.Empty);
+                StartTerminal(environment, project, BuildLocalTerminalScript(path, environment, plan), path, string.Empty);
             }
             catch (Win32Exception)
             {
@@ -279,11 +279,18 @@ namespace ControlTower.Infrastructure.Launch
                 : null;
         }
 
-        private static string BuildLocalTerminalScript(string path, LaunchEnvironment environment, IReadOnlyList<string> extraArguments)
+        private static string BuildLocalTerminalScript(string path, LaunchEnvironment environment, CopilotLaunchPlan plan)
         {
-            var script = "Set-Location -LiteralPath " + PsQuote(path) + "; & " + PsQuote(environment.Command) +
-                         (string.IsNullOrWhiteSpace(environment.Arguments) ? string.Empty : " " + environment.Arguments.Trim());
-            return script + FormatExtraArguments(extraArguments);
+            var session = "& " + PsQuote(environment.Command) +
+                          (string.IsNullOrWhiteSpace(environment.Arguments) ? string.Empty : " " + environment.Arguments.Trim());
+
+            var script = "Set-Location -LiteralPath " + PsQuote(path) + "; ";
+            if (plan != null && plan.HasUpdateStep)
+            {
+                script += "& " + PsQuote(environment.Command) + FormatExtraArguments(plan.UpdateArguments) + "; ";
+            }
+
+            return script + session + FormatExtraArguments(plan?.SessionArguments);
         }
 
         private static string FormatExtraArguments(IReadOnlyList<string> extraArguments)
@@ -387,12 +394,12 @@ namespace ControlTower.Infrastructure.Launch
                 return LaunchResult.Unconfigured("Code path is not available");
             }
 
-            if (!TryResolveAutostart(project, environment, out var autostartTokens, out var rejection))
+            if (!TryResolveAutostart(project, environment, out var autostartPlan, out var rejection))
             {
                 return rejection;
             }
 
-            var script = BuildLocalTerminalScript(path, environment, autostartTokens);
+            var script = BuildLocalTerminalScript(path, environment, autostartPlan);
             return StartTerminal(environment, project, script, path, "Opened " + environment.DisplayName);
         }
 
@@ -412,22 +419,17 @@ namespace ControlTower.Infrastructure.Launch
             }
 
             string remoteLine;
-            if (!TryResolveAutostart(project, environment, out var autostartTokens, out var autostartRejection))
+            if (!TryResolveAutostart(project, environment, out var autostartPlan, out var autostartRejection))
             {
                 return autostartRejection;
             }
 
-            // Tokens are allowlist-validated (letters, digits, dot, underscore,
-            // hyphen), so they carry no meaning to cmd or a POSIX shell.
-            var remoteExtra = autostartTokens == null || autostartTokens.Count == 0
-                ? string.Empty
-                : " " + string.Join(" ", autostartTokens);
-
             if (!string.IsNullOrWhiteSpace(environment.RemoteCommand))
             {
+                var remoteInvocation = BuildRemoteInvocation(environment.RemoteCommand.Trim(), null, autostartPlan, windowsPath);
                 remoteLine = windowsPath
-                    ? "cd /d " + remotePath + " && " + environment.RemoteCommand.Trim() + remoteExtra
-                    : "cd '" + remotePath + "' && " + environment.RemoteCommand.Trim() + remoteExtra;
+                    ? "cd /d " + remotePath + " && " + remoteInvocation
+                    : "cd '" + remotePath + "' && " + remoteInvocation;
             }
             else if (!IsBareCommandName(environment.Command))
             {
@@ -438,13 +440,12 @@ namespace ControlTower.Infrastructure.Launch
             {
                 remoteLine = "powershell.exe -NoLogo -NoProfile -EncodedCommand " +
                              Convert.ToBase64String(System.Text.Encoding.Unicode.GetBytes(
-                                 BuildWindowsRemoteScript(remotePath, environment, autostartTokens)));
+                                 BuildWindowsRemoteScript(remotePath, environment, autostartPlan)));
             }
             else
             {
-                remoteLine = "cd '" + remotePath + "' && " + environment.Command.Trim() +
-                             (string.IsNullOrWhiteSpace(environment.Arguments) ? string.Empty : " " + environment.Arguments.Trim()) +
-                             remoteExtra;
+                remoteLine = "cd '" + remotePath + "' && " +
+                             BuildRemoteInvocation(environment.Command.Trim(), environment.Arguments, autostartPlan, false);
             }
 
             var ssh = string.IsNullOrWhiteSpace(_settings.SshCommand) ? "ssh" : _settings.SshCommand.Trim().Trim('"');
@@ -499,18 +500,50 @@ namespace ControlTower.Infrastructure.Launch
         /// "Access is denied" inside an SSH session, and they are often first on
         /// PATH (e.g. GitHub Copilot CLI), so resolve the first real executable.
         /// </summary>
-        private static string BuildWindowsRemoteScript(string remotePath, LaunchEnvironment environment, IReadOnlyList<string> extraArguments)
+        private static string BuildWindowsRemoteScript(string remotePath, LaunchEnvironment environment, CopilotLaunchPlan plan)
         {
             var name = environment.Command.Trim();
             var args = (string.IsNullOrWhiteSpace(environment.Arguments) ? string.Empty : " " + environment.Arguments.Trim()) +
-                       FormatExtraArguments(extraArguments);
+                       FormatExtraArguments(plan?.SessionArguments);
+            var update = plan != null && plan.HasUpdateStep
+                ? "& $c.Source" + FormatExtraArguments(plan.UpdateArguments) + "\n"
+                : string.Empty;
             return "Set-Location -LiteralPath " + PsQuote(remotePath) + "\n" +
                    "$c = Get-Command -Name " + PsQuote(name) + " -CommandType Application -All -ErrorAction SilentlyContinue |" +
                    " Where-Object { $_.Source -notlike '*\\WindowsApps\\*' } | Select-Object -First 1\n" +
                    "if (-not $c) { Write-Host " + PsQuote("'" + name + "' was not found on this host (Microsoft Store app aliases cannot run over SSH).") +
                    " -ForegroundColor Red; exit 1 }\n" +
+                   update +
                    "& $c.Source" + args + "\n" +
                    "exit $LASTEXITCODE";
+        }
+
+        /// <summary>
+        /// Builds the command a remote shell runs. Tokens are allowlist-validated
+        /// (letters, digits, dot, underscore, hyphen), so they carry no meaning
+        /// to cmd or a POSIX shell. When an update step is present the two
+        /// commands are grouped and separated by a run-regardless operator, so
+        /// an update that cannot reach the network still leaves the session
+        /// starting while the whole group stays conditional on the preceding cd.
+        /// </summary>
+        private static string BuildRemoteInvocation(string command, string environmentArguments, CopilotLaunchPlan plan, bool windowsShell)
+        {
+            var session = command +
+                          (string.IsNullOrWhiteSpace(environmentArguments) ? string.Empty : " " + environmentArguments.Trim()) +
+                          FormatRemoteArguments(plan?.SessionArguments);
+
+            if (plan == null || !plan.HasUpdateStep)
+            {
+                return session;
+            }
+
+            return "(" + command + FormatRemoteArguments(plan.UpdateArguments) +
+                   (windowsShell ? " & " : "; ") + session + ")";
+        }
+
+        private static string FormatRemoteArguments(IReadOnlyList<string> tokens)
+        {
+            return tokens == null || tokens.Count == 0 ? string.Empty : " " + string.Join(" ", tokens);
         }
 
         private static bool IsBareCommandName(string command)

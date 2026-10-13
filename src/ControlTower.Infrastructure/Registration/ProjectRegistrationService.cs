@@ -80,6 +80,17 @@ namespace ControlTower.Infrastructure.Registration
                 };
             }
 
+            if (!string.IsNullOrWhiteSpace(request.ArchivePath) &&
+                !ControlTower.Infrastructure.Configuration.AllowedSettingsRoots.IsUnderAllowedRoot(
+                    request.ArchivePath, ControlTower.Infrastructure.Configuration.AllowedSettingsRoots.GetAllowedRoots()))
+            {
+                return new ProjectRegistrationResult
+                {
+                    Success = false,
+                    Message = "Archive path must resolve under a user-local folder (LocalAppData, RoamingAppData, your user profile, or OneDrive)."
+                };
+            }
+
             var projectId = string.IsNullOrWhiteSpace(request.ProjectId)
                 ? BuildProjectId(request.DisplayName)
                 : request.ProjectId.Trim();
@@ -394,6 +405,16 @@ namespace ControlTower.Infrastructure.Registration
             {
                 lines.Add("group: " + EscapeScalar(request.Group.Trim()));
             }
+
+            var archivePath = request.ArchivePath == null
+                ? existingProject?.ArchivePath
+                : request.ArchivePath.Trim();
+            if (!string.IsNullOrWhiteSpace(archivePath))
+            {
+                lines.Add("archive:");
+                lines.Add("  path: " + EscapeScalar(archivePath));
+            }
+
             lines.Add(string.Empty);
             lines.Add("planning:");
             lines.Add("  authority: " + EscapeScalar(authority));
@@ -426,6 +447,8 @@ namespace ControlTower.Infrastructure.Registration
                 lines.Add("    session_name: " + EscapeScalar(autostart.SessionName));
                 lines.Add("    agent: " + EscapeScalar(autostart.AgentName));
                 lines.Add("    yolo: " + (autostart.Yolo ? "true" : "false"));
+                lines.Add("    check_updates: " + (autostart.CheckForUpdates ? "true" : "false"));
+                lines.Add("    update_channel: " + CopilotAutostart.FormatUpdateChannel(autostart.UpdateChannel));
                 lines.Add("    integrated_terminal: " + (autostart.UseIntegratedTerminal ? "true" : "false"));
             }
 

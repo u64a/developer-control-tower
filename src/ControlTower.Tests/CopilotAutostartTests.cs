@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using ControlTower.Core.Models;
 using ControlTower.Infrastructure.Configuration;
 using ControlTower.Infrastructure.Launch;
@@ -598,10 +599,476 @@ public class CopilotAutostartTests : IDisposable
         Assert.True(environment.SupportsCopilotAutostart);
     }
 
+    // ------------------------------------------- continue + update checking
+
+    [Fact]
+    public void ContinueSession_UsesContinueInsteadOfResume()
+    {
+        var autostart = new CopilotAutostart { Enabled = true, SessionMode = CopilotSessionMode.Continue };
+
+        Assert.True(autostart.TryBuildArguments(out var tokens, out _));
+        Assert.Equal(new[] { "--continue" }, tokens);
+        Assert.Equal("copilot --continue", autostart.Describe("copilot"));
+    }
+
+    [Fact]
+    public void UpdateCheck_ChainsUpdateAheadOfTheSession()
+    {
+        var autostart = new CopilotAutostart
+        {
+            Enabled = true,
+            Yolo = true,
+            AgentName = "squad",
+            SessionMode = CopilotSessionMode.Continue,
+            CheckForUpdates = true
+        };
+
+        Assert.True(autostart.TryBuildPlan(out var plan, out _));
+        Assert.True(plan.HasUpdateStep);
+        Assert.Equal(new[] { "update", "stable" }, plan.UpdateArguments);
+        Assert.Equal(new[] { "--yolo", "--agent", "squad", "--continue" }, plan.SessionArguments);
+        Assert.Equal(
+            "copilot update stable; copilot --yolo --agent squad --continue",
+            autostart.Describe("copilot"));
+    }
+
+    [Fact]
+    public void UpdateCheck_PrereleaseChannelIsPassedThrough()
+    {
+        var autostart = new CopilotAutostart
+        {
+            Enabled = true,
+            CheckForUpdates = true,
+            UpdateChannel = CopilotUpdateChannel.Prerelease
+        };
+
+        Assert.Equal(new[] { "update", "prerelease" }, autostart.BuildUpdateArguments());
+        Assert.Equal("copilot update prerelease; copilot --resume", autostart.Describe("copilot"));
+    }
+
+    [Fact]
+    public void UpdateCheck_ProducesNoUpdateStepWhenOff()
+    {
+        Assert.Empty(new CopilotAutostart { Enabled = true }.BuildUpdateArguments());
+
+        // Autostart off: the update step must not leak out either.
+        Assert.Empty(new CopilotAutostart { CheckForUpdates = true }.BuildUpdateArguments());
+
+        Assert.True(new CopilotAutostart { Enabled = true }.TryBuildPlan(out var plan, out _));
+        Assert.False(plan.HasUpdateStep);
+    }
+
+    [Fact]
+    public void UpdateCheck_WithUnusableSessionNameIsRefused()
+    {
+        var autostart = new CopilotAutostart
+        {
+            Enabled = true,
+            CheckForUpdates = true,
+            SessionMode = CopilotSessionMode.Name
+        };
+
+        Assert.False(autostart.TryBuildPlan(out var plan, out var error));
+        Assert.Null(plan);
+        Assert.Contains("Enter a session name", error);
+    }
+
+    [Fact]
+    public void UpdateOptions_CountTowardsDefaultAndClone()
+    {
+        Assert.False(new CopilotAutostart { CheckForUpdates = true }.IsDefault);
+        Assert.False(new CopilotAutostart { UpdateChannel = CopilotUpdateChannel.Prerelease }.IsDefault);
+        Assert.False(new CopilotAutostart { SessionMode = CopilotSessionMode.Continue }.IsDefault);
+
+        var clone = new CopilotAutostart
+        {
+            Enabled = true,
+            CheckForUpdates = true,
+            UpdateChannel = CopilotUpdateChannel.Prerelease,
+            SessionMode = CopilotSessionMode.Continue
+        }.Clone();
+
+        Assert.True(clone.CheckForUpdates);
+        Assert.Equal(CopilotUpdateChannel.Prerelease, clone.UpdateChannel);
+        Assert.Equal(CopilotSessionMode.Continue, clone.SessionMode);
+    }
+
+    [Fact]
+    public void Registration_RoundTripsUpdateOptions()
+    {
+        var (svc, yamlPath, localPath) = NewRegistration();
+
+        var request = Request(localPath);
+        request.CopilotAutostart = new CopilotAutostart
+        {
+            Enabled = true,
+            SessionMode = CopilotSessionMode.Continue,
+            CheckForUpdates = true,
+            UpdateChannel = CopilotUpdateChannel.Prerelease
+        };
+        Assert.True(svc.RegisterProject(request).Success);
+
+        var reloaded = Load(yamlPath).Launch.CopilotAutostart;
+        Assert.True(reloaded.CheckForUpdates);
+        Assert.Equal(CopilotUpdateChannel.Prerelease, reloaded.UpdateChannel);
+        Assert.Equal(CopilotSessionMode.Continue, reloaded.SessionMode);
+    }
+
+    [Fact]
+    public void Yaml_UnknownUpdateChannelFallsBackToStable()
+    {
+        var dir = Path.Combine(_root, "badchannel");
+        Directory.CreateDirectory(Path.Combine(dir, ".controltower"));
+        File.WriteAllText(Path.Combine(dir, ".controltower", "project.yml"), string.Join("\n", new[]
+        {
+            "id: p1",
+            "display_name: Project One",
+            "launch:",
+            "  copilot_autostart:",
+            "    enabled: true",
+            "    check_updates: true",
+            "    update_channel: \"nightly; calc.exe\""
+        }));
+
+        var autostart = new ProjectYamlProvider().LoadProject(dir).Project.Launch.CopilotAutostart;
+
+        Assert.True(autostart.CheckForUpdates);
+        Assert.Equal(CopilotUpdateChannel.Stable, autostart.UpdateChannel);
+        Assert.Equal(new[] { "update", "stable" }, autostart.BuildUpdateArguments());
+    }
+
+    [Fact]
+    public void Yaml_InRepoPrereleaseChannelIsIgnored()
+    {
+        var dir = WriteChannelProject("clonedrepo", "prerelease");
+        Directory.CreateDirectory(Path.Combine(dir, ".git"));
+
+        var result = new ProjectYamlProvider().LoadProject(dir);
+
+        // The channel moves the globally installed CLI, so a copy that can
+        // arrive with a clone is not allowed to choose it.
+        Assert.Equal(CopilotUpdateChannel.Stable, result.Project.Launch.CopilotAutostart.UpdateChannel);
+        Assert.True(result.Project.Launch.CopilotAutostart.CheckForUpdates);
+        Assert.Contains(result.Issues, i => i.Code == "project/copilot-autostart/update-channel");
+    }
+
+    [Fact]
+    public void Yaml_InRepoStableChannelRaisesNoIssue()
+    {
+        var dir = WriteChannelProject("stablerepo", "stable");
+        Directory.CreateDirectory(Path.Combine(dir, ".git"));
+
+        var result = new ProjectYamlProvider().LoadProject(dir);
+
+        Assert.Equal(CopilotUpdateChannel.Stable, result.Project.Launch.CopilotAutostart.UpdateChannel);
+        Assert.DoesNotContain(result.Issues, i => i.Code == "project/copilot-autostart/update-channel");
+    }
+
+    [Fact]
+    public void Yaml_PrereleaseChannelFromTheCentralStoreIsHonoured()
+    {
+        var workingRoot = Path.Combine(_root, "central-working");
+        Directory.CreateDirectory(Path.Combine(workingRoot, ".git"));
+        var metadataRoot = WriteChannelProject("central-metadata", "prerelease");
+
+        var result = new ProjectYamlProvider().LoadProject(workingRoot, metadataRoot);
+
+        Assert.Equal(CopilotUpdateChannel.Prerelease, result.Project.Launch.CopilotAutostart.UpdateChannel);
+        Assert.DoesNotContain(result.Issues, i => i.Code == "project/copilot-autostart/update-channel");
+    }
+
+    [Fact]
+    public void Yaml_LegacyInRepoFallbackCannotSelectPrerelease()
+    {
+        var workingRoot = WriteChannelProject("legacy-working", "prerelease");
+        Directory.CreateDirectory(Path.Combine(workingRoot, ".git"));
+        var emptyStub = Path.Combine(_root, "legacy-stub");
+        Directory.CreateDirectory(emptyStub);
+
+        var result = new ProjectYamlProvider().LoadProject(workingRoot, emptyStub);
+
+        Assert.Equal(CopilotUpdateChannel.Stable, result.Project.Launch.CopilotAutostart.UpdateChannel);
+        Assert.Contains(result.Issues, i => i.Code == "project/copilot-autostart/update-channel");
+    }
+
+    private string WriteChannelProject(string name, string channel)
+    {
+        var dir = Path.Combine(_root, name);
+        Directory.CreateDirectory(Path.Combine(dir, ".controltower"));
+        File.WriteAllText(Path.Combine(dir, ".controltower", "project.yml"), string.Join("\n", new[]
+        {
+            "id: p1",
+            "display_name: Project One",
+            "launch:",
+            "  copilot_autostart:",
+            "    enabled: true",
+            "    check_updates: true",
+            "    update_channel: " + channel
+        }));
+        return dir;
+    }
+
+    [Fact]
+    public void CopilotTerminal_WithUpdateCheck_RunsUpdateBeforeTheSession()    {
+        var project = LocalProject();
+        project.Launch.Environment = LaunchEnvironmentCatalog.CopilotCliId;
+        project.Launch.CopilotAutostart = new CopilotAutostart
+        {
+            Enabled = true,
+            Yolo = true,
+            CheckForUpdates = true,
+            SessionMode = CopilotSessionMode.Continue
+        };
+
+        var started = Launch(project, out var result);
+
+        Assert.True(result.Success);
+        var script = DecodeScript(Assert.Single(started));
+        Assert.Contains("& 'copilot' 'update' 'stable'; & 'copilot' '--yolo' '--continue'", script);
+    }
+
+    [Fact]
+    public void UpdateStep_DoesNotInheritTheEnvironmentsSessionArguments()
+    {
+        // The environment's own args are session flags; 'copilot update' would
+        // reject them, so only the session command may carry them.
+        var catalog = new LaunchEnvironmentCatalog(
+            new[]
+            {
+                new LaunchEnvironment(
+                    LaunchEnvironmentCatalog.CopilotCliId,
+                    "GitHub Copilot CLI",
+                    LaunchEnvironmentKind.Terminal,
+                    "copilot",
+                    arguments: "--banner",
+                    isBuiltIn: true)
+            },
+            LaunchEnvironmentCatalog.CopilotCliId);
+
+        var project = LocalProject();
+        project.Launch.Environment = LaunchEnvironmentCatalog.CopilotCliId;
+        project.Launch.CopilotAutostart = new CopilotAutostart { Enabled = true, CheckForUpdates = true };
+
+        var started = new List<ProcessStartInfo>();
+        var settings = new ToolSettings { LaunchEnvironments = catalog };
+        var result = new WindowsLaunchService(settings, started.Add).Launch(project, LaunchTargetKind.Code);
+
+        Assert.True(result.Success);
+        var script = DecodeScript(Assert.Single(started));
+        Assert.Contains("& 'copilot' 'update' 'stable'; & 'copilot' --banner '--resume'", script);
+    }
+
+    [Fact]
+    public void Editor_WithUpdateCheck_RunsUpdateInTheCompanionTerminal()
+    {
+        var project = LocalProject();
+        project.Launch.CopilotAutostart = new CopilotAutostart { Enabled = true, CheckForUpdates = true };
+
+        var started = Launch(project, out var result);
+
+        Assert.True(result.Success);
+        Assert.Equal(2, started.Count);
+        Assert.Contains("& 'copilot' 'update' 'stable'; & 'copilot' '--resume'", DecodeScript(started[1]));
+        Assert.Contains("copilot update stable; copilot --resume", result.Message);
+    }
+
+    [Fact]
+    public void IntegratedTerminal_WithUpdateCheck_WritesADependentUpdateTask()
+    {
+        var project = LocalProject();
+        project.Launch.CopilotAutostart = new CopilotAutostart
+        {
+            Enabled = true,
+            CheckForUpdates = true,
+            UpdateChannel = CopilotUpdateChannel.Prerelease,
+            UseIntegratedTerminal = true
+        };
+
+        Launch(project, out var result);
+
+        Assert.True(result.Success);
+        var tasks = JsonNode.Parse(File.ReadAllText(TasksPath()))!["tasks"]!.AsArray();
+        Assert.Equal(2, tasks.Count);
+
+        var update = tasks[0]!.AsObject();
+        Assert.Equal(VsCodeTaskFile.UpdateTaskLabel, update["label"]!.GetValue<string>());
+        Assert.Equal(
+            new[] { "update", "prerelease" },
+            update["args"]!.AsArray().Select(a => a!.GetValue<string>()).ToArray());
+
+        // Only the session task opens the folder; the update task is pulled in
+        // as its dependency, so it must not fire on its own.
+        Assert.Null(update["runOptions"]);
+
+        var session = tasks[1]!.AsObject();
+        Assert.Equal(VsCodeTaskFile.TaskLabel, session["label"]!.GetValue<string>());
+        Assert.Equal("folderOpen", session["runOptions"]!["runOn"]!.GetValue<string>());
+        Assert.Equal("sequence", session["dependsOrder"]!.GetValue<string>());
+        Assert.Equal(
+            new[] { VsCodeTaskFile.UpdateTaskLabel },
+            session["dependsOn"]!.AsArray().Select(a => a!.GetValue<string>()).ToArray());
+    }
+
+    [Fact]
+    public void IntegratedTerminal_TurningUpdateCheckOff_RemovesTheUpdateTask()
+    {
+        var project = LocalProject();
+        project.Launch.CopilotAutostart = new CopilotAutostart
+        {
+            Enabled = true,
+            CheckForUpdates = true,
+            UseIntegratedTerminal = true
+        };
+        Launch(project, out _);
+        Assert.Equal(2, JsonNode.Parse(File.ReadAllText(TasksPath()))!["tasks"]!.AsArray().Count);
+
+        project.Launch.CopilotAutostart.CheckForUpdates = false;
+        Launch(project, out var result);
+
+        Assert.True(result.Success);
+        var tasks = JsonNode.Parse(File.ReadAllText(TasksPath()))!["tasks"]!.AsArray();
+        var session = Assert.Single(tasks)!.AsObject();
+        Assert.Equal(VsCodeTaskFile.TaskLabel, session["label"]!.GetValue<string>());
+        Assert.Null(session["dependsOn"]);
+    }
+
+    [Fact]
+    public void ClearingIntegratedTerminal_RemovesBothGeneratedTasks()
+    {
+        var project = LocalProject();
+        project.Launch.CopilotAutostart = new CopilotAutostart
+        {
+            Enabled = true,
+            CheckForUpdates = true,
+            UseIntegratedTerminal = true
+        };
+        Launch(project, out _);
+
+        var tasks = JsonNode.Parse(File.ReadAllText(TasksPath()))!.AsObject();
+        tasks["tasks"]!.AsArray().Add(new JsonObject { ["label"] = "build", ["command"] = "dotnet build" });
+        File.WriteAllText(TasksPath(), tasks.ToJsonString());
+
+        project.Launch.CopilotAutostart.UseIntegratedTerminal = false;
+        Launch(project, out var result);
+
+        Assert.True(result.Success);
+        var labels = JsonNode.Parse(File.ReadAllText(TasksPath()))!["tasks"]!.AsArray()
+            .Select(t => t!["label"]!.GetValue<string>()).ToArray();
+        Assert.Equal(new[] { "build" }, labels);
+    }
+
+    [Fact]
+    public void IntegratedTerminal_ReplacesATaskThatClaimsAnOwnedNameViaTaskName()
+    {
+        var project = LocalProject();
+        project.Launch.CopilotAutostart = new CopilotAutostart
+        {
+            Enabled = true,
+            CheckForUpdates = true,
+            UseIntegratedTerminal = true
+        };
+
+        Directory.CreateDirectory(Path.GetDirectoryName(TasksPath())!);
+        File.WriteAllText(TasksPath(), new JsonObject
+        {
+            ["version"] = "2.0.0",
+            ["tasks"] = new JsonArray
+            {
+                // VS Code resolves this task by taskName when no label is set,
+                // so it would otherwise shadow the task dependsOn points at.
+                new JsonObject
+                {
+                    ["taskName"] = VsCodeTaskFile.UpdateTaskLabel,
+                    ["command"] = "shadow.exe"
+                },
+                new JsonObject { ["taskName"] = "build", ["command"] = "dotnet build" }
+            }
+        }.ToJsonString());
+
+        Launch(project, out var result);
+
+        Assert.True(result.Success);
+        var tasks = JsonNode.Parse(File.ReadAllText(TasksPath()))!["tasks"]!.AsArray();
+        Assert.Equal(3, tasks.Count);
+        Assert.Equal("build", tasks[0]!["taskName"]!.GetValue<string>());
+        Assert.DoesNotContain(tasks, t => t!["command"]!.GetValue<string>() == "shadow.exe");
+
+        var update = tasks[1]!.AsObject();
+        Assert.Equal(VsCodeTaskFile.UpdateTaskLabel, update["label"]!.GetValue<string>());
+        Assert.Equal(
+            new[] { "update", "stable" },
+            update["args"]!.AsArray().Select(a => a!.GetValue<string>()).ToArray());
+    }
+
+    [Fact]
+    public void RemoteSsh_WithUpdateCheck_GroupsUpdateAndSessionAfterTheCd()
+    {
+        var project = SshProject("devbox:/home/me/repo");
+        project.Launch.CopilotAutostart = new CopilotAutostart
+        {
+            Enabled = true,
+            Yolo = true,
+            CheckForUpdates = true,
+            SessionMode = CopilotSessionMode.Continue
+        };
+
+        var started = Launch(project, out var result);
+
+        Assert.True(result.Success);
+
+        // The group keeps both commands conditional on the cd, while the ';'
+        // inside it lets the session start even if the update cannot run.
+        Assert.Equal(
+            "& 'ssh' -t 'devbox' 'cd ''/home/me/repo'' && (copilot update stable; copilot --yolo --continue)'",
+            DecodeScript(Assert.Single(started)));
+    }
+
+    [Fact]
+    public void RemoteSsh_WithoutUpdateCheck_IsUnchanged()
+    {
+        var project = SshProject("devbox:/home/me/repo");
+        project.Launch.CopilotAutostart = new CopilotAutostart { Enabled = true, Yolo = true };
+
+        var started = Launch(project, out var result);
+
+        Assert.True(result.Success);
+        Assert.Equal(
+            "& 'ssh' -t 'devbox' 'cd ''/home/me/repo'' && copilot --yolo --resume'",
+            DecodeScript(Assert.Single(started)));
+    }
+
+    [Fact]
+    public void RemoteSshToWindows_WithUpdateCheck_RunsUpdateAsItsOwnQuotedLine()
+    {
+        var project = SshProject(@"winbox:C:\repo");
+        project.Launch.CopilotAutostart = new CopilotAutostart { Enabled = true, CheckForUpdates = true };
+
+        var started = Launch(project, out var result);
+
+        Assert.True(result.Success);
+        var inner = DecodeInnerScript(DecodeScript(Assert.Single(started)));
+        Assert.Contains("& $c.Source 'update' 'stable'\n& $c.Source '--resume'", inner);
+    }
+
     // --------------------------------------------------------------- helpers
 
     private string TasksPath() => Path.Combine(_root, ".vscode", "tasks.json");
 
+    private static ProjectDefinition SshProject(string sshTarget)
+    {
+        var project = new ProjectDefinition { Id = "p1", DisplayName = "Project One" };
+        project.Locations.SshTarget = sshTarget;
+        project.Launch.Environment = LaunchEnvironmentCatalog.CopilotCliId;
+        return project;
+    }
+
+    /// <summary>Unwraps the PowerShell payload the remote Windows host runs.</summary>
+    private static string DecodeInnerScript(string outerScript)
+    {
+        var match = Regex.Match(outerScript, "-EncodedCommand ([A-Za-z0-9+/=]+)");
+        Assert.True(match.Success, "Expected a nested encoded command in: " + outerScript);
+        return Encoding.Unicode.GetString(Convert.FromBase64String(match.Groups[1].Value));
+    }
     private void WriteTasksJson(string content)
     {
         Directory.CreateDirectory(Path.Combine(_root, ".vscode"));

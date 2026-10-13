@@ -26,6 +26,9 @@ namespace ControlTower.Infrastructure.Yaml.Dto
         [YamlMember(Alias = "group")]
         public string Group { get; set; }
 
+        [YamlMember(Alias = "archive")]
+        public ProjectArchiveDto Archive { get; set; }
+
         [YamlMember(Alias = "planning")]
         public PlanningDto Planning { get; set; }
 
@@ -49,6 +52,17 @@ namespace ControlTower.Infrastructure.Yaml.Dto
 
         [YamlMember(Alias = "source_ref")]
         public string SourceRef { get; set; }
+    }
+
+    public sealed class ProjectArchiveDto
+    {
+        /// <summary>
+        /// Per-project storage root override for the Archive safety-net
+        /// clone. Blank/omitted falls back to the global
+        /// archive.storage_root from settings.yml.
+        /// </summary>
+        [YamlMember(Alias = "path")]
+        public string Path { get; set; }
     }
 
     public sealed class LocationsDto
@@ -100,6 +114,12 @@ namespace ControlTower.Infrastructure.Yaml.Dto
 
         [YamlMember(Alias = "yolo")]
         public bool Yolo { get; set; }
+
+        [YamlMember(Alias = "check_updates")]
+        public bool CheckUpdates { get; set; }
+
+        [YamlMember(Alias = "update_channel")]
+        public string UpdateChannel { get; set; }
 
         [YamlMember(Alias = "integrated_terminal")]
         public bool IntegratedTerminal { get; set; }

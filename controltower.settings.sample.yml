@@ -15,6 +15,17 @@ security:
   github_credential_target: DCT-GitHub
   ado_credential_target: DCT-Ado
 
+# Local safety-net for forked repos. Projects whose Group is exactly
+# "Archive" (case-insensitive) get a full clone kept here, refreshed on
+# launch, and never deleted locally even if the upstream GitHub repo
+# disappears (e.g. a DMCA takedown). Leave empty to disable archiving.
+# A project can override this with its own storage root via the
+# project row's right-click "Set archive path..." menu (stored as
+# archive.path in that project's project.yml); blank there falls back
+# to this profile-wide default.
+archive:
+  storage_root:
+
 # How projects open. Built-ins: vscode (default), copilot-cli, claude-code.
 # Override per project with the row's right-click "Launch environment" menu
 # (stored as launch.environment in the project's project.yml).

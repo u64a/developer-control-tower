@@ -7,11 +7,51 @@ namespace ControlTower.Core.Models
     /// <summary>Which session flag Copilot CLI starts with.</summary>
     public enum CopilotSessionMode
     {
-        /// <summary><c>--resume</c>: pick up a previous session.</summary>
+        /// <summary><c>--resume</c>: open the session picker.</summary>
         Resume,
 
         /// <summary><c>--name &lt;name&gt;</c>: start a new, named session.</summary>
-        Name
+        Name,
+
+        /// <summary><c>--continue</c>: resume the most recent session without prompting.</summary>
+        Continue
+    }
+
+    /// <summary>Release channel passed to the <c>copilot update</c> subcommand.</summary>
+    public enum CopilotUpdateChannel
+    {
+        /// <summary><c>copilot update stable</c>.</summary>
+        Stable,
+
+        /// <summary><c>copilot update prerelease</c>.</summary>
+        Prerelease
+    }
+
+    /// <summary>
+    /// The commands one Copilot autostart turns into, in the order they run.
+    /// The update step is a separate command because <c>update</c> is a
+    /// subcommand rather than a flag, and it deliberately never receives the
+    /// launch environment's own arguments — those are session flags that the
+    /// update subcommand would reject.
+    /// </summary>
+    public sealed class CopilotLaunchPlan
+    {
+        public CopilotLaunchPlan(IReadOnlyList<string> updateArguments, IReadOnlyList<string> sessionArguments)
+        {
+            UpdateArguments = updateArguments ?? Array.Empty<string>();
+            SessionArguments = sessionArguments ?? Array.Empty<string>();
+        }
+
+        /// <summary>Tokens for <c>copilot update</c>, or empty when the project does not check for updates.</summary>
+        public IReadOnlyList<string> UpdateArguments { get; }
+
+        /// <summary>Tokens for the session command itself.</summary>
+        public IReadOnlyList<string> SessionArguments { get; }
+
+        public bool HasUpdateStep
+        {
+            get { return UpdateArguments.Count > 0; }
+        }
     }
 
     /// <summary>
@@ -45,6 +85,18 @@ namespace ControlTower.Core.Models
         public bool Yolo { get; set; }
 
         /// <summary>
+        /// Runs <c>copilot update</c> immediately before the session starts.
+        /// <c>update</c> is a subcommand rather than a flag, so it runs as its
+        /// own command chained ahead of the session. On standalone installs a
+        /// downloaded version applies at the next launch, which is the chained
+        /// session command.
+        /// </summary>
+        public bool CheckForUpdates { get; set; }
+
+        /// <summary>Channel passed to <c>copilot update</c>; only meaningful when <see cref="CheckForUpdates"/> is set.</summary>
+        public CopilotUpdateChannel UpdateChannel { get; set; } = CopilotUpdateChannel.Stable;
+
+        /// <summary>
         /// Runs Copilot CLI inside VS Code's integrated terminal instead of a
         /// terminal beside it. VS Code has no command line that runs a command
         /// in its terminal, so this works by writing a <c>.vscode/tasks.json</c>
@@ -61,6 +113,8 @@ namespace ControlTower.Core.Models
                 return !Enabled &&
                        !Yolo &&
                        !UseIntegratedTerminal &&
+                       !CheckForUpdates &&
+                       UpdateChannel == CopilotUpdateChannel.Stable &&
                        SessionMode == CopilotSessionMode.Resume &&
                        string.IsNullOrWhiteSpace(SessionName) &&
                        string.IsNullOrWhiteSpace(AgentName);
@@ -76,6 +130,8 @@ namespace ControlTower.Core.Models
                 SessionName = SessionName ?? string.Empty,
                 AgentName = AgentName ?? string.Empty,
                 Yolo = Yolo,
+                CheckForUpdates = CheckForUpdates,
+                UpdateChannel = UpdateChannel,
                 UseIntegratedTerminal = UseIntegratedTerminal
             };
         }
@@ -88,14 +144,72 @@ namespace ControlTower.Core.Models
         /// <summary>Parses a persisted session mode; anything unrecognised falls back to resume.</summary>
         public static CopilotSessionMode ParseSessionMode(string value)
         {
-            return string.Equals((value ?? string.Empty).Trim(), "name", StringComparison.OrdinalIgnoreCase)
-                ? CopilotSessionMode.Name
+            var text = (value ?? string.Empty).Trim();
+            if (string.Equals(text, "name", StringComparison.OrdinalIgnoreCase))
+            {
+                return CopilotSessionMode.Name;
+            }
+
+            return string.Equals(text, "continue", StringComparison.OrdinalIgnoreCase)
+                ? CopilotSessionMode.Continue
                 : CopilotSessionMode.Resume;
         }
 
         public static string FormatSessionMode(CopilotSessionMode mode)
         {
-            return mode == CopilotSessionMode.Name ? "name" : "resume";
+            if (mode == CopilotSessionMode.Name)
+            {
+                return "name";
+            }
+
+            return mode == CopilotSessionMode.Continue ? "continue" : "resume";
+        }
+
+        /// <summary>Parses a persisted update channel; anything unrecognised falls back to stable.</summary>
+        public static CopilotUpdateChannel ParseUpdateChannel(string value)
+        {
+            return string.Equals((value ?? string.Empty).Trim(), "prerelease", StringComparison.OrdinalIgnoreCase)
+                ? CopilotUpdateChannel.Prerelease
+                : CopilotUpdateChannel.Stable;
+        }
+
+        public static string FormatUpdateChannel(CopilotUpdateChannel channel)
+        {
+            return channel == CopilotUpdateChannel.Prerelease ? "prerelease" : "stable";
+        }
+
+        /// <summary>
+        /// Tokens for the <c>copilot update</c> command that runs ahead of the
+        /// session, or an empty list when the project does not ask for it. The
+        /// channel is always written out so the command says what it does
+        /// rather than relying on the CLI's default.
+        /// </summary>
+        public IReadOnlyList<string> BuildUpdateArguments()
+        {
+            if (!Enabled || !CheckForUpdates)
+            {
+                return Array.Empty<string>();
+            }
+
+            return new[] { "update", FormatUpdateChannel(UpdateChannel) };
+        }
+
+        /// <summary>
+        /// The ordered commands this project launches. Returns false with a
+        /// user-facing reason when the configured options cannot be turned
+        /// into a safe command line.
+        /// </summary>
+        public bool TryBuildPlan(out CopilotLaunchPlan plan, out string error)
+        {
+            plan = null;
+
+            if (!TryBuildArguments(out var session, out error))
+            {
+                return false;
+            }
+
+            plan = new CopilotLaunchPlan(BuildUpdateArguments(), session);
+            return true;
         }
 
         /// <summary>
@@ -147,6 +261,10 @@ namespace ControlTower.Core.Models
                 tokens.Add("--name");
                 tokens.Add(session);
             }
+            else if (SessionMode == CopilotSessionMode.Continue)
+            {
+                tokens.Add("--continue");
+            }
             else
             {
                 tokens.Add("--resume");
@@ -164,9 +282,22 @@ namespace ControlTower.Core.Models
                 return string.Empty;
             }
 
-            return TryBuildArguments(out var tokens, out _)
-                ? name + (tokens.Count == 0 ? string.Empty : " " + string.Join(" ", tokens))
-                : name;
+            if (!TryBuildPlan(out var plan, out _))
+            {
+                return name;
+            }
+
+            var parts = new List<string>();
+            if (plan.HasUpdateStep)
+            {
+                parts.Add(name + " " + string.Join(" ", plan.UpdateArguments));
+            }
+
+            parts.Add(plan.SessionArguments.Count == 0
+                ? name
+                : name + " " + string.Join(" ", plan.SessionArguments));
+
+            return string.Join("; ", parts);
         }
     }
 }

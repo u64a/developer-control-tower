@@ -25,6 +25,15 @@ namespace ControlTower.Core.Composition
             overview.Summary = ValueOr(project.Summary, "No summary provided.");
             overview.LifecycleState = ValueOr(project.LifecycleState, "unknown");
             overview.Group = ValueOr(project.Group, "Ungrouped");
+            overview.ArchivePathOverride = project.ArchivePath ?? string.Empty;
+
+            // Archive-group projects are a static local safety-net copy, not
+            // active development — override whatever lifecycle_state is on
+            // disk so the UI never shows a stale "active" for them.
+            if (ArchiveGroup.Matches(overview.Group))
+            {
+                overview.LifecycleState = "archival";
+            }
             overview.PlanningAuthority = project.Planning == null ? "unknown" : ValueOr(project.Planning.Authority, "unknown");
             overview.SourcePath = ValueOr(project.ProjectRootPath, string.Empty);
             overview.WorkspaceMode = ResolveWorkspaceMode(project);

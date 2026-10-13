@@ -7,7 +7,7 @@
     <RootNamespace>ControlTower.Desktop</RootNamespace>
     <AssemblyName>ControlTower.Desktop</AssemblyName>
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
-    <Version>0.14.0-preview.1</Version>
+    <Version>0.16.0-preview.1</Version>
     <Product>Developer Control Tower</Product>
     <PackageId>u64a.DeveloperControlTower</PackageId>
     <Company>u64a</Company>
@@ -97,6 +97,8 @@
           Condition="Exists('$(MSBuildThisFileDirectory)..\..\.git')">
     <Exec Command="git rev-parse --short HEAD"
           ConsoleToMSBuild="true"
+          StandardOutputImportance="Low"
+          StandardErrorImportance="Low"
           IgnoreExitCode="true"
           ContinueOnError="true">
       <Output TaskParameter="ConsoleOutput" PropertyName="GitShortSha" />

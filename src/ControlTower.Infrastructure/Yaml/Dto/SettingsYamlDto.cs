@@ -23,6 +23,9 @@ namespace ControlTower.Infrastructure.Yaml.Dto
         [YamlMember(Alias = "library")]
         public LibraryDto Library { get; set; }
 
+        [YamlMember(Alias = "archive")]
+        public ArchiveDto Archive { get; set; }
+
         [YamlMember(Alias = "updates")]
         public UpdatesDto Updates { get; set; }
 
@@ -121,6 +124,13 @@ namespace ControlTower.Infrastructure.Yaml.Dto
     {
         [YamlMember(Alias = "path")]
         public string Path { get; set; }
+    }
+
+    public sealed class ArchiveDto
+    {
+        /// <summary>Storage root for full clones of "Archive" group projects.</summary>
+        [YamlMember(Alias = "storage_root")]
+        public string StorageRoot { get; set; }
     }
 
     public sealed class UpdatesDto

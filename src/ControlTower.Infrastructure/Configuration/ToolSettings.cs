@@ -17,6 +17,7 @@ namespace ControlTower.Infrastructure.Configuration
             GitHubCredentialTarget = string.Empty;
             AdoCredentialTarget = string.Empty;
             LibraryPath = string.Empty;
+            ArchiveStorageRootPath = string.Empty;
             Stores = new List<RepoStore>();
             Issues = new List<ValidationIssue>();
             UpdateOptions = UpdateOptions.Defaults();
@@ -63,6 +64,14 @@ namespace ControlTower.Infrastructure.Configuration
         /// user-writable library under the resolved portable config root.
         /// </summary>
         public string LibraryPath { get; set; }
+
+        /// <summary>
+        /// Root folder under which full clones for the reserved "Archive"
+        /// project group are kept. Empty disables archive syncing entirely —
+        /// this is an explicit, user-chosen local-safety-net feature, never
+        /// a hidden default location.
+        /// </summary>
+        public string ArchiveStorageRootPath { get; set; }
 
         public List<RepoStore> Stores { get; set; }
 

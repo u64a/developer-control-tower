@@ -102,6 +102,9 @@ namespace ControlTower.Desktop
             var previousSelection = _viewModel?.SelectedProject?.Id;
             _viewModel = new MainViewModel(_controlTowerService, null, _updateService, _updateOptions);
             _viewModel.LaunchEnvironments = session.LaunchEnvironments;
+            _viewModel.ArchiveSyncService = session.ArchiveSyncService;
+            _viewModel.ArchiveStateStore = session.ArchiveStateStore;
+            _viewModel.ArchiveStorageRootPath = session.ArchiveStorageRootPath;
             _viewModel.PendingSelectionId = previousSelection;
             DataContext = _viewModel;
             RefreshProfileMenu();
@@ -126,6 +129,11 @@ namespace ControlTower.Desktop
             // One-shot background seed of LOCAL repo states after first paint —
             // fills in the status lamps without blocking the UI or touching SSH.
             _ = _viewModel.SeedLocalStatesAsync();
+
+            // One-shot background sync of "Archive" group projects. No-ops
+            // silently when the feature isn't configured; drives the bottom
+            // status bar progress bar when active.
+            _ = _viewModel.RunArchiveSyncAsync();
 
             if (_updateOptions.AutoCheckOnLaunch)
             {
@@ -762,9 +770,8 @@ namespace ControlTower.Desktop
             menu.Items.Clear();
             AddLaunchEnvironmentMenus(menu, project);
 
-            var header = new System.Windows.Controls.MenuItem { Header = "Move to group", IsEnabled = false };
-            menu.Items.Add(header);
-            menu.Items.Add(new System.Windows.Controls.Separator());
+            var moveToGroup = new System.Windows.Controls.MenuItem { Header = "Move to group" };
+            menu.Items.Add(moveToGroup);
 
             foreach (var grp in _viewModel.KnownGroups)
             {
@@ -774,7 +781,7 @@ namespace ControlTower.Desktop
                     IsChecked = string.Equals(project.Group, grp, System.StringComparison.OrdinalIgnoreCase)
                 };
                 item.Click += (_, _) => _viewModel.MoveProjectToGroup(project, grp);
-                menu.Items.Add(item);
+                moveToGroup.Items.Add(item);
             }
 
             var ungrouped = new System.Windows.Controls.MenuItem
@@ -783,9 +790,9 @@ namespace ControlTower.Desktop
                 IsChecked = string.Equals(project.Group, "Ungrouped", System.StringComparison.OrdinalIgnoreCase)
             };
             ungrouped.Click += (_, _) => _viewModel.MoveProjectToGroup(project, string.Empty);
-            menu.Items.Add(ungrouped);
+            moveToGroup.Items.Add(ungrouped);
 
-            menu.Items.Add(new System.Windows.Controls.Separator());
+            moveToGroup.Items.Add(new System.Windows.Controls.Separator());
             var newGroup = new System.Windows.Controls.MenuItem { Header = "New group…" };
             newGroup.Click += (_, _) =>
             {
@@ -795,7 +802,22 @@ namespace ControlTower.Desktop
                     _viewModel.MoveProjectToGroup(project, dlg.GroupName);
                 }
             };
-            menu.Items.Add(newGroup);
+            moveToGroup.Items.Add(newGroup);
+
+            if (ArchiveGroup.Matches(project.Group))
+            {
+                menu.Items.Add(new System.Windows.Controls.Separator());
+                var setArchivePath = new System.Windows.Controls.MenuItem { Header = "Set archive path…" };
+                setArchivePath.Click += (_, _) =>
+                {
+                    var dlg = new SetArchivePathDialog(project.ArchivePathOverride) { Owner = this };
+                    if (dlg.ShowDialog() == true)
+                    {
+                        _viewModel.SetProjectArchivePath(project, dlg.ArchivePath);
+                    }
+                };
+                menu.Items.Add(setArchivePath);
+            }
         }
 
         private void AddLaunchEnvironmentMenus(System.Windows.Controls.ContextMenu menu, ProjectOverview project)
