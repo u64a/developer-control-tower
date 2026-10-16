@@ -2,10 +2,13 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Security.Cryptography;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using ControlTower.Core.Contracts;
 using ControlTower.Core.Models;
+using ControlTower.Infrastructure.Configuration;
 using ControlTower.Infrastructure.Diagnostics;
 using ControlTower.Infrastructure.Git;
 
@@ -18,7 +21,7 @@ namespace ControlTower.Infrastructure.Archive
     /// latest-release capture. Read-only against GitHub; never deletes the
     /// local clone, even when the upstream has disappeared.
     /// </summary>
-    public sealed class ArchiveSyncService : IArchiveSyncService
+    public sealed class ArchiveSyncService : IArchiveSyncService, IArchiveSyncSafetyService
     {
         private static readonly TimeSpan FetchTimeout = TimeSpan.FromMinutes(10);
         private static readonly TimeSpan LsRemoteTimeout = TimeSpan.FromSeconds(20);
@@ -36,6 +39,9 @@ namespace ControlTower.Infrastructure.Archive
         private readonly IAsyncCloneService _cloneService;
         private readonly IArchiveStateStore _stateStore;
         private readonly IArchiveReleaseClient _releaseClient;
+        private readonly GitWorkspaceInspector _workspaceInspector;
+
+        private const string OwnerMarkerFileName = "controltower-archive-owner";
 
         public ArchiveSyncService(
             IGitProcessAdapter gitAdapter,
@@ -47,7 +53,11 @@ namespace ControlTower.Infrastructure.Archive
             _cloneService = cloneService ?? throw new ArgumentNullException(nameof(cloneService));
             _stateStore = stateStore ?? throw new ArgumentNullException(nameof(stateStore));
             _releaseClient = releaseClient ?? throw new ArgumentNullException(nameof(releaseClient));
+            _workspaceInspector = new GitWorkspaceInspector(_gitAdapter);
         }
+
+        public ArchiveSyncSafetyResult ValidateSafety(ArchiveSyncSafetyRequest request) =>
+            ArchiveWorkingSourceSafetyValidator.Validate(request);
 
         public async Task<ArchiveSyncResult> SyncAsync(
             ArchiveSyncRequest request,
@@ -66,27 +76,87 @@ namespace ControlTower.Infrastructure.Archive
                     request.ProjectId, ArchiveSyncStatus.Failed, "Remote URL missing or contains embedded credentials.", null);
             }
 
-            if (string.IsNullOrWhiteSpace(request.ArchiveStorageRoot))
+            var safety = ValidateSafety(new ArchiveSyncSafetyRequest(
+                request.ArchiveStorageRoot,
+                request.WorkingSourceInventory));
+            if (!safety.IsSafe)
             {
                 return new ArchiveSyncResult(
-                    request.ProjectId, ArchiveSyncStatus.Failed, "No archive storage root is configured.", null);
+                    request.ProjectId,
+                    ArchiveSyncStatus.Failed,
+                    safety.Message,
+                    null);
+            }
+
+            var archiveStorageRoot = safety.EffectiveArchiveStorageRoot;
+            if (!ArchiveProjectIdentity.TryResolveArchivePath(
+                    archiveStorageRoot,
+                    request.ProjectId,
+                    out var archivePath,
+                    out var archivePathError))
+            {
+                return new ArchiveSyncResult(
+                    request.ProjectId,
+                    ArchiveSyncStatus.Failed,
+                    archivePathError,
+                    null);
             }
 
             var state = _stateStore.Load(request.ProjectId);
-            Directory.CreateDirectory(request.ArchiveStorageRoot);
+            var ownershipError = await ValidateExistingArchiveAsync(
+                archivePath,
+                request.ProjectId,
+                request.RemoteUrl,
+                state,
+                ct).ConfigureAwait(false);
+            if (ownershipError != null)
+            {
+                return new ArchiveSyncResult(
+                    request.ProjectId,
+                    ArchiveSyncStatus.Failed,
+                    ownershipError,
+                    state.LastSyncedCommitSha);
+            }
 
-            var archivePath = string.IsNullOrWhiteSpace(state.ArchivePath)
-                ? Path.Combine(request.ArchiveStorageRoot, Slugify(request.ProjectId))
-                : state.ArchivePath;
+            try
+            {
+                Directory.CreateDirectory(archiveStorageRoot);
+            }
+            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
+            {
+                return new ArchiveSyncResult(
+                    request.ProjectId,
+                    ArchiveSyncStatus.Failed,
+                    "Archive storage root could not be created: " + ex.Message,
+                    state.LastSyncedCommitSha);
+            }
+
+            // Recheck after creation so a junction or physical drive mapping
+            // introduced while the root was being prepared cannot redirect
+            // the clone destination.
+            if (!TryRevalidateArchiveDestination(
+                    request,
+                    archiveStorageRoot,
+                    request.ProjectId,
+                    archivePath,
+                    out archivePathError))
+            {
+                return new ArchiveSyncResult(
+                    request.ProjectId,
+                    ArchiveSyncStatus.Failed,
+                    archivePathError,
+                    state.LastSyncedCommitSha);
+            }
+
+            RetainPreviousArchivePath(state, archivePath);
 
             progress?.Report("Checking remote: " + request.ProjectId);
 
             var (reachable, goneForGood, lsRemoteMessage) = await CheckRemoteAsync(
-                request.RemoteUrl, request.ArchiveStorageRoot, ct).ConfigureAwait(false);
+                request.RemoteUrl, archiveStorageRoot, ct).ConfigureAwait(false);
 
             if (!reachable)
             {
-                state.ArchivePath = archivePath;
                 state.UpstreamStatus = goneForGood ? ArchiveUpstreamStatus.Unavailable : state.UpstreamStatus;
                 state.LastError = lsRemoteMessage;
                 _stateStore.Save(state);
@@ -95,13 +165,28 @@ namespace ControlTower.Infrastructure.Archive
                     ? new ArchiveSyncResult(
                         request.ProjectId,
                         ArchiveSyncStatus.UpstreamUnavailable,
-                        "Upstream is gone (" + lsRemoteMessage + "). Local archive copy kept untouched at " + archivePath,
+                        "Upstream is gone (" + lsRemoteMessage + "). Local archive copy kept untouched at " +
+                        ExistingArchiveLocation(state, archivePath),
                         state.LastSyncedCommitSha)
                     : new ArchiveSyncResult(
                         request.ProjectId,
                         ArchiveSyncStatus.Failed,
                         "Could not reach the remote (transient): " + lsRemoteMessage,
                         state.LastSyncedCommitSha);
+            }
+
+            if (!TryRevalidateArchiveDestination(
+                    request,
+                    archiveStorageRoot,
+                    request.ProjectId,
+                    archivePath,
+                    out archivePathError))
+            {
+                return new ArchiveSyncResult(
+                    request.ProjectId,
+                    ArchiveSyncStatus.Failed,
+                    archivePathError,
+                    state.LastSyncedCommitSha);
             }
 
             try
@@ -127,6 +212,71 @@ namespace ControlTower.Infrastructure.Archive
                     commitSha = cloneResult.CommitSha;
                 }
 
+                if (!TryRevalidateArchiveDestination(
+                        request,
+                        archiveStorageRoot,
+                        request.ProjectId,
+                        archivePath,
+                        out archivePathError))
+                {
+                    state.LastError = archivePathError;
+                    _stateStore.Save(state);
+                    return new ArchiveSyncResult(
+                        request.ProjectId,
+                        ArchiveSyncStatus.Failed,
+                        archivePathError,
+                        state.LastSyncedCommitSha);
+                }
+
+                if (!isNewClone)
+                {
+                    var originError = await ValidateArchiveOriginAsync(
+                        archivePath,
+                        request.RemoteUrl,
+                        ct).ConfigureAwait(false);
+                    if (originError != null)
+                    {
+                        state.LastError = originError;
+                        _stateStore.Save(state);
+                        return new ArchiveSyncResult(
+                            request.ProjectId,
+                            ArchiveSyncStatus.Failed,
+                            originError,
+                            state.LastSyncedCommitSha);
+                    }
+                }
+
+                if (!TryWriteOwnerMarker(
+                        archivePath,
+                        request.ProjectId,
+                        GetRemoteIdentity(request.RemoteUrl),
+                        out var markerError))
+                {
+                    state.LastError = markerError;
+                    _stateStore.Save(state);
+                    return new ArchiveSyncResult(
+                        request.ProjectId,
+                        ArchiveSyncStatus.Failed,
+                        markerError,
+                        state.LastSyncedCommitSha);
+                }
+
+                if (!TryRevalidateArchiveDestination(
+                        request,
+                        archiveStorageRoot,
+                        request.ProjectId,
+                        archivePath,
+                        out archivePathError))
+                {
+                    state.LastError = archivePathError;
+                    _stateStore.Save(state);
+                    return new ArchiveSyncResult(
+                        request.ProjectId,
+                        ArchiveSyncStatus.Failed,
+                        archivePathError,
+                        state.LastSyncedCommitSha);
+                }
+
                 // Resolve the root (non-fork) upstream once per sync so the
                 // local archive tracks the original project's default branch
                 // — the user never pushes to their own fork, so "origin" is
@@ -140,6 +290,22 @@ namespace ControlTower.Infrastructure.Archive
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
                     AppLogger.Warn("Archive", "Upstream resolution failed for " + request.ProjectId + ": " + ex.Message);
+                }
+
+                if (!TryRevalidateArchiveDestination(
+                        request,
+                        archiveStorageRoot,
+                        request.ProjectId,
+                        archivePath,
+                        out archivePathError))
+                {
+                    state.LastError = archivePathError;
+                    _stateStore.Save(state);
+                    return new ArchiveSyncResult(
+                        request.ProjectId,
+                        ArchiveSyncStatus.Failed,
+                        archivePathError,
+                        state.LastSyncedCommitSha);
                 }
 
                 if (upstream != null)
@@ -185,7 +351,14 @@ namespace ControlTower.Infrastructure.Archive
                 // their own, so "the latest release" means the original
                 // project's latest release.
                 var releaseSourceUrl = upstream?.CloneUrl ?? request.RemoteUrl;
-                await CaptureLatestReleaseAsync(request, state, archivePath, releaseSourceUrl, progress, ct).ConfigureAwait(false);
+                await CaptureLatestReleaseAsync(
+                    request,
+                    state,
+                    archiveStorageRoot,
+                    archivePath,
+                    releaseSourceUrl,
+                    progress,
+                    ct).ConfigureAwait(false);
 
                 _stateStore.Save(state);
                 return new ArchiveSyncResult(
@@ -201,6 +374,293 @@ namespace ControlTower.Infrastructure.Archive
                 _stateStore.Save(state);
                 AppLogger.Error("Archive", "Archive sync failed for " + request.ProjectId + ": " + ex.Message, ex);
                 return new ArchiveSyncResult(request.ProjectId, ArchiveSyncStatus.Failed, ex.Message, state.LastSyncedCommitSha);
+            }
+        }
+
+        private bool TryRevalidateArchiveDestination(
+            ArchiveSyncRequest request,
+            string archiveStorageRoot,
+            string projectId,
+            string expectedArchivePath,
+            out string error)
+        {
+            error = string.Empty;
+            var safety = ValidateSafety(new ArchiveSyncSafetyRequest(
+                request.ArchiveStorageRoot,
+                request.WorkingSourceInventory));
+            if (!safety.IsSafe)
+            {
+                error = safety.Message;
+                return false;
+            }
+
+            if (!string.Equals(
+                    safety.EffectiveArchiveStorageRoot,
+                    archiveStorageRoot,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                error = "Archive storage root changed while it was being prepared.";
+                return false;
+            }
+
+            if (!ArchiveProjectIdentity.TryResolveArchivePath(
+                    archiveStorageRoot,
+                    projectId,
+                    out var validatedPath,
+                    out var validationError))
+            {
+                error = string.IsNullOrWhiteSpace(validationError)
+                    ? "Archive destination could not be revalidated safely."
+                    : validationError;
+                return false;
+            }
+
+            if (!string.Equals(validatedPath, expectedArchivePath, StringComparison.OrdinalIgnoreCase))
+            {
+                error = "Archive destination changed while it was being prepared.";
+                return false;
+            }
+
+            return true;
+        }
+
+        private async Task<string?> ValidateExistingArchiveAsync(
+            string archivePath,
+            string projectId,
+            string expectedRemoteUrl,
+            ArchiveRepoState state,
+            CancellationToken ct)
+        {
+            try
+            {
+                if (!Directory.Exists(archivePath))
+                {
+                    return null;
+                }
+
+                if (AllowedSettingsRoots.HasExistingReparsePoint(archivePath))
+                {
+                    return "Existing archive destination crosses a reparse point and cannot be used.";
+                }
+
+                if (!Directory.EnumerateFileSystemEntries(archivePath).Any())
+                {
+                    return null;
+                }
+
+                var gitDirectory = Path.Combine(archivePath, ".git");
+                if (!Directory.Exists(gitDirectory) ||
+                    AllowedSettingsRoots.HasExistingReparsePoint(gitDirectory))
+                {
+                    return "Archive destination is occupied by an unverified directory.";
+                }
+
+                var originError = await ValidateArchiveOriginAsync(
+                    archivePath,
+                    expectedRemoteUrl,
+                    ct).ConfigureAwait(false);
+                if (originError != null)
+                {
+                    return originError;
+                }
+
+                var expectedIdentity = GetRemoteIdentity(expectedRemoteUrl);
+                var markerPath = GetOwnerMarkerPath(archivePath);
+                if (File.Exists(markerPath))
+                {
+                    if (!TryReadOwnerMarker(archivePath, out var markerProjectId, out var markerRemoteIdentity))
+                    {
+                        return "Existing archive ownership marker is invalid.";
+                    }
+
+                    return string.Equals(markerProjectId, projectId, StringComparison.Ordinal) &&
+                        string.Equals(markerRemoteIdentity, expectedIdentity, StringComparison.Ordinal)
+                        ? null
+                        : "Existing archive ownership does not match this project and remote.";
+                }
+
+                if (state != null &&
+                    string.Equals(state.ProjectId, projectId, StringComparison.Ordinal) &&
+                    HasExactProjectLeaf(state.ArchivePath, projectId) &&
+                    IsSamePath(state.ArchivePath, archivePath))
+                {
+                    return null;
+                }
+
+                return "Existing archive ownership cannot be proven safely.";
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
+            {
+                return "Existing archive could not be inspected safely: " + ex.Message;
+            }
+        }
+
+        private async Task<string?> ValidateArchiveOriginAsync(
+            string archivePath,
+            string expectedRemoteUrl,
+            CancellationToken ct)
+        {
+            var expectedIdentity = GetRemoteIdentity(expectedRemoteUrl);
+            if (string.IsNullOrWhiteSpace(expectedIdentity))
+            {
+                return "Archive remote could not be normalized safely.";
+            }
+
+            try
+            {
+                var origin = await _gitAdapter.RunAsync(
+                    new[] { "remote", "get-url", "origin" },
+                    archivePath,
+                    LsRemoteTimeout,
+                    progress: null,
+                    ct).ConfigureAwait(false);
+                if (origin.Cancelled || origin.ExitCode != 0)
+                {
+                    return "Existing archive has no readable origin remote.";
+                }
+
+                var values = SplitNonEmptyLines(origin.Stdout).ToArray();
+                if (values.Length != 1 ||
+                    !string.Equals(
+                        GetRemoteIdentity(values[0]),
+                        expectedIdentity,
+                        StringComparison.Ordinal))
+                {
+                    return "Existing archive origin does not match the requested remote.";
+                }
+
+                return null;
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (GitNotFoundException ex)
+            {
+                return ex.Message;
+            }
+            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
+            {
+                return "Existing archive origin could not be inspected safely: " + ex.Message;
+            }
+        }
+
+        private bool TryReadOwnerMarker(
+            string archivePath,
+            out string projectId,
+            out string remoteIdentity)
+        {
+            projectId = string.Empty;
+            remoteIdentity = string.Empty;
+            try
+            {
+                var markerPath = GetOwnerMarkerPath(archivePath);
+                if (!File.Exists(markerPath) ||
+                    AllowedSettingsRoots.HasExistingReparsePoint(markerPath))
+                {
+                    return false;
+                }
+
+                var lines = File.ReadAllLines(markerPath);
+                if (lines.Length != 2 ||
+                    !lines[0].StartsWith("project_id=", StringComparison.Ordinal) ||
+                    !lines[1].StartsWith("remote_identity=", StringComparison.Ordinal))
+                {
+                    return false;
+                }
+
+                projectId = lines[0].Substring("project_id=".Length);
+                remoteIdentity = lines[1].Substring("remote_identity=".Length);
+                return ArchiveProjectIdentity.IsSafe(projectId) &&
+                    !string.IsNullOrWhiteSpace(remoteIdentity);
+            }
+            catch (IOException)
+            {
+                return false;
+            }
+            catch (UnauthorizedAccessException)
+            {
+                return false;
+            }
+        }
+
+        private bool TryWriteOwnerMarker(
+            string archivePath,
+            string projectId,
+            string remoteIdentity,
+            out string error)
+        {
+            error = string.Empty;
+            if (!ArchiveProjectIdentity.IsSafe(projectId) ||
+                string.IsNullOrWhiteSpace(remoteIdentity))
+            {
+                error = "Archive ownership marker could not be prepared safely.";
+                return false;
+            }
+
+            try
+            {
+                var gitDirectory = Path.Combine(archivePath, ".git");
+                if (!Directory.Exists(gitDirectory) ||
+                    AllowedSettingsRoots.HasExistingReparsePoint(gitDirectory))
+                {
+                    error = "Archive Git metadata cannot be verified safely.";
+                    return false;
+                }
+
+                var markerPath = GetOwnerMarkerPath(archivePath);
+                File.WriteAllLines(markerPath, new[]
+                {
+                    "project_id=" + projectId,
+                    "remote_identity=" + remoteIdentity
+                });
+                return true;
+            }
+            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
+            {
+                error = "Archive ownership marker could not be written: " + ex.Message;
+                return false;
+            }
+        }
+
+        private string GetRemoteIdentity(string remoteUrl) =>
+            _workspaceInspector.GetRemoteIdentity(remoteUrl);
+
+        private static string GetOwnerMarkerPath(string archivePath) =>
+            Path.Combine(archivePath, ".git", OwnerMarkerFileName);
+
+        private static bool IsSamePath(string first, string second)
+        {
+            try
+            {
+                return !string.IsNullOrWhiteSpace(first) &&
+                    string.Equals(
+                        Path.GetFullPath(first),
+                        Path.GetFullPath(second),
+                        StringComparison.OrdinalIgnoreCase);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static bool HasExactProjectLeaf(string path, string projectId)
+        {
+            try
+            {
+                return string.Equals(
+                    Path.GetFileName(Path.GetFullPath(path)),
+                    projectId,
+                    StringComparison.Ordinal);
+            }
+            catch
+            {
+                return false;
             }
         }
 
@@ -356,6 +816,7 @@ namespace ControlTower.Infrastructure.Archive
         private async Task CaptureLatestReleaseAsync(
             ArchiveSyncRequest request,
             ArchiveRepoState state,
+            string archiveStorageRoot,
             string archivePath,
             string releaseSourceUrl,
             IProgress<string>? progress,
@@ -381,15 +842,57 @@ namespace ControlTower.Infrastructure.Archive
 
             progress?.Report("Capturing release " + release.TagName + ": " + request.ProjectId);
 
-            var releasesRoot = Path.Combine(archivePath, "releases");
-            var incomingDir = Path.Combine(releasesRoot, ".incoming-" + Slugify(release.TagName));
+            if (!TryRevalidateArchiveDestination(
+                    request,
+                    archiveStorageRoot,
+                    request.ProjectId,
+                    archivePath,
+                    out _))
+            {
+                AppLogger.Warn(
+                    "Archive",
+                    "Release capture skipped for " + request.ProjectId +
+                    " because its archive destination could not be revalidated safely.");
+                return;
+            }
+
+            if (!TryGetSafeChildPath(archivePath, "releases", out var releasesRoot) ||
+                !TryGetSafeChildPath(
+                    releasesRoot,
+                    ".incoming-" + Slugify(release.TagName),
+                    out var incomingDir))
+            {
+                AppLogger.Warn(
+                    "Archive",
+                    "Release capture skipped for " + request.ProjectId +
+                    " because its archive content path is unsafe.");
+                return;
+            }
+
             Directory.CreateDirectory(incomingDir);
+            if (AllowedSettingsRoots.HasExistingReparsePoint(incomingDir))
+            {
+                AppLogger.Warn(
+                    "Archive",
+                    "Release capture skipped for " + request.ProjectId +
+                    " because its incoming directory is a reparse point.");
+                return;
+            }
 
             var anyMismatch = false;
             var anyUnverifiable = false;
             foreach (var asset in release.Assets)
             {
-                var destination = Path.Combine(incomingDir, Slugify(asset.Name));
+                if (!TryGetSafeChildPath(incomingDir, Slugify(asset.Name), out var destination))
+                {
+                    AppLogger.Warn(
+                        "Archive",
+                        "Release capture skipped for " + request.ProjectId +
+                        " because an asset destination is unsafe.");
+                    TryDeleteDirectory(incomingDir);
+                    return;
+                }
+
                 var integrity = await _releaseClient
                     .DownloadAndVerifyAsync(asset, destination, ct)
                     .ConfigureAwait(false);
@@ -404,6 +907,20 @@ namespace ControlTower.Infrastructure.Archive
                 }
             }
 
+            if (!TryRevalidateArchiveDestination(
+                    request,
+                    archiveStorageRoot,
+                    request.ProjectId,
+                    archivePath,
+                    out _))
+            {
+                AppLogger.Warn(
+                    "Archive",
+                    "Release capture stopped for " + request.ProjectId +
+                    " because its archive destination changed during download.");
+                return;
+            }
+
             if (anyMismatch)
             {
                 AppLogger.Warn(
@@ -415,7 +932,16 @@ namespace ControlTower.Infrastructure.Archive
                 return;
             }
 
-            var finalDir = Path.Combine(releasesRoot, Slugify(release.TagName));
+            if (!TryGetSafeChildPath(releasesRoot, Slugify(release.TagName), out var finalDir))
+            {
+                AppLogger.Warn(
+                    "Archive",
+                    "Release capture skipped for " + request.ProjectId +
+                    " because its final directory is unsafe.");
+                TryDeleteDirectory(incomingDir);
+                return;
+            }
+
             if (Directory.Exists(finalDir))
             {
                 TryDeleteDirectory(finalDir);
@@ -446,7 +972,7 @@ namespace ControlTower.Infrastructure.Archive
         {
             try
             {
-                if (Directory.Exists(path))
+                if (Directory.Exists(path) && !AllowedSettingsRoots.HasExistingReparsePoint(path))
                 {
                     Directory.Delete(path, recursive: true);
                 }
@@ -456,6 +982,39 @@ namespace ControlTower.Infrastructure.Archive
             }
             catch (UnauthorizedAccessException)
             {
+            }
+        }
+
+        private static bool TryGetSafeChildPath(string parent, string childName, out string path)
+        {
+            path = string.Empty;
+            if (string.IsNullOrWhiteSpace(parent) ||
+                string.IsNullOrWhiteSpace(childName) ||
+                childName.IndexOf(Path.DirectorySeparatorChar) >= 0 ||
+                childName.IndexOf(Path.AltDirectorySeparatorChar) >= 0)
+            {
+                return false;
+            }
+
+            try
+            {
+                var fullParent = Path.GetFullPath(parent)
+                    .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                var candidate = Path.GetFullPath(Path.Combine(fullParent, childName));
+                if (!candidate.StartsWith(
+                        fullParent + Path.DirectorySeparatorChar,
+                        StringComparison.OrdinalIgnoreCase) ||
+                    AllowedSettingsRoots.HasExistingReparsePoint(candidate))
+                {
+                    return false;
+                }
+
+                path = candidate;
+                return true;
+            }
+            catch
+            {
+                return false;
             }
         }
 
@@ -479,14 +1038,111 @@ namespace ControlTower.Infrastructure.Archive
             return fallback;
         }
 
+        private static System.Collections.Generic.IEnumerable<string> SplitNonEmptyLines(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                yield break;
+            }
+
+            using var reader = new StringReader(text);
+            string? line;
+            while ((line = reader.ReadLine()) != null)
+            {
+                var trimmed = line.Trim();
+                if (trimmed.Length > 0)
+                {
+                    yield return trimmed;
+                }
+            }
+        }
+
+        private static void RetainPreviousArchivePath(ArchiveRepoState state, string archivePath)
+        {
+            if (state == null ||
+                string.IsNullOrWhiteSpace(state.ArchivePath) ||
+                string.Equals(state.ArchivePath, archivePath, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            if (!state.PreviousArchivePaths.Any(path =>
+                    string.Equals(path, state.ArchivePath, StringComparison.OrdinalIgnoreCase)))
+            {
+                state.PreviousArchivePaths.Add(state.ArchivePath);
+            }
+        }
+
+        private static string ExistingArchiveLocation(ArchiveRepoState state, string requestedArchivePath)
+        {
+            return !string.IsNullOrWhiteSpace(state?.ArchivePath)
+                ? state.ArchivePath
+                : requestedArchivePath;
+        }
+
         internal static string Slugify(string value)
         {
-            var result = value ?? string.Empty;
-            foreach (var invalid in Path.GetInvalidFileNameChars())
+            var original = value ?? string.Empty;
+            var builder = new StringBuilder(original.Length);
+            var changed = false;
+            foreach (var character in original)
             {
-                result = result.Replace(invalid, '_');
+                if (character < 32 ||
+                    character == '<' ||
+                    character == '>' ||
+                    character == ':' ||
+                    character == '"' ||
+                    character == '/' ||
+                    character == '\\' ||
+                    character == '|' ||
+                    character == '?' ||
+                    character == '*')
+                {
+                    builder.Append('_');
+                    changed = true;
+                }
+                else
+                {
+                    builder.Append(character);
+                }
             }
-            return result;
+
+            var result = builder.ToString().TrimEnd(' ', '.');
+            changed |= !string.Equals(original, result, StringComparison.Ordinal);
+            if (string.IsNullOrWhiteSpace(result) ||
+                string.Equals(result, ".", StringComparison.Ordinal) ||
+                string.Equals(result, "..", StringComparison.Ordinal) ||
+                IsReservedWindowsFileName(result))
+            {
+                result = "item";
+                changed = true;
+            }
+
+            if (!changed)
+            {
+                return result;
+            }
+
+            var hash = SHA256.HashData(Encoding.UTF8.GetBytes(original));
+            return result + "-" + Convert.ToHexString(hash, 0, 6).ToLowerInvariant();
+        }
+
+        private static bool IsReservedWindowsFileName(string value)
+        {
+            var baseName = value.Split('.')[0];
+            if (string.Equals(baseName, "CON", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(baseName, "PRN", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(baseName, "AUX", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(baseName, "NUL", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            return baseName.Length == 4 &&
+                (baseName.StartsWith("COM", StringComparison.OrdinalIgnoreCase) ||
+                 baseName.StartsWith("LPT", StringComparison.OrdinalIgnoreCase)) &&
+                baseName[3] >= '1' &&
+                baseName[3] <= '9';
         }
     }
 }

@@ -40,25 +40,45 @@ namespace ControlTower.Desktop.ViewModels
             get { return _launchResolver == null || _project == null ? null : _launchResolver(_project); }
         }
 
-        /// <summary>The wrapped portfolio overview (swappable on in-place seed/refresh).</summary>
+        /// <summary>
+        /// The wrapped portfolio overview (swappable on in-place seed/refresh).
+        /// Always re-notifies on assignment — including when the incoming
+        /// reference is the very same, already-wrapped instance. <see cref="ProjectOverview"/>
+        /// is a plain mutable DTO with no value equality, so a real sync
+        /// result or a whole-batch block that mutates fields (ArchiveStatus,
+        /// ArchiveStatusDetail) on that same instance and reassigns it here
+        /// must still be observed by the row; the reference-equality
+        /// short-circuit <see cref="ObservableObject.Set{T}"/> uses elsewhere
+        /// would otherwise make that reassignment a silent no-op.
+        /// </summary>
         public ProjectOverview Project
         {
             get { return _project; }
             set
             {
-                if (Set(ref _project, value))
-                {
-                    // Notify "Project" so WPF CollectionViewSource re-evaluates
-                    // the group bucket (PropertyGroupDescription "Project.Group")
-                    // when the overview is swapped in place during seeding.
-                    OnPropertyChanged("Project");
-                    // RepoState is a pass-through used by the shared lamp style
-                    // (which binds {Binding RepoState}); notify so the lamp
-                    // recolours when the overview is swapped in place on seed.
-                    OnPropertyChanged("RepoState");
-                    OnPropertyChanged("Launch");
-                }
+                _project = value;
+                // Notify "Project" so WPF CollectionViewSource re-evaluates
+                // the group bucket (PropertyGroupDescription "Project.Group")
+                // when the overview is swapped/mutated in place during seeding.
+                OnPropertyChanged("Project");
+                // RepoState is a pass-through used by the shared lamp style
+                // (which binds {Binding RepoState}); notify so the lamp
+                // recolours when the overview is swapped/mutated in place.
+                OnPropertyChanged("RepoState");
+                OnPropertyChanged("Launch");
             }
+        }
+
+        /// <summary>
+        /// Forces the row's display bindings to re-read <see cref="Project"/>
+        /// without reassigning it — a convenience for callers that only hold
+        /// a reference to the row (not the overview) and need a refresh.
+        /// </summary>
+        public void NotifyProjectChanged()
+        {
+            OnPropertyChanged("Project");
+            OnPropertyChanged("RepoState");
+            OnPropertyChanged("Launch");
         }
 
         /// <summary>

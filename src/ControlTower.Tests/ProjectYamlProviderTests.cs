@@ -220,4 +220,31 @@ docs:
             Directory.Delete(dir, true);
         }
     }
+
+    [Fact]
+    public void LoadProject_LegacyArchivePath_IsIgnoredWithWarning()
+    {
+        var yaml = @"kind: developer-control-tower/project
+schema_version: 0
+
+id: legacy-archive
+display_name: Legacy Archive
+
+archive:
+  path: C:\Legacy\Archive\Override
+";
+        var dir = CreateTempProjectDir(yaml);
+        try
+        {
+            var provider = new ProjectYamlProvider();
+            var result = provider.LoadProject(dir);
+
+            Assert.Equal(string.Empty, result.Project.ArchivePath);
+            Assert.Contains(result.Issues, i => i.Code == "project/archive/path-ignored");
+        }
+        finally
+        {
+            Directory.Delete(dir, true);
+        }
+    }
 }

@@ -35,10 +35,9 @@ namespace ControlTower.Core.Models
         public string Group { get; set; } = string.Empty;
 
         /// <summary>
-        /// Optional per-project override for where this project's Archive
-        /// safety-net clone is kept. Empty means "use the global
-        /// archive.storage_root from settings.yml". Only meaningful for
-        /// projects in the Archive group.
+        /// Retained for source compatibility with the short-lived per-project
+        /// archive override. It is no longer read or persisted: every archive
+        /// uses the global archive storage root.
         /// </summary>
         public string ArchivePath { get; set; } = string.Empty;
 
@@ -208,9 +207,9 @@ namespace ControlTower.Core.Models
         public string Group { get; set; } = string.Empty;
 
         /// <summary>
-        /// Per-project Archive storage root override. <c>null</c> preserves
-        /// the existing value on edit, empty clears it (falls back to the
-        /// global archive.storage_root), otherwise it replaces it.
+        /// Retained for source compatibility with the short-lived per-project
+        /// archive override. Registration ignores this value and no longer
+        /// writes an <c>archive.path</c> project setting.
         /// </summary>
         public string ArchivePath { get; set; }
 

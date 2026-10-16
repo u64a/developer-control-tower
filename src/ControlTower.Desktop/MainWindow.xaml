@@ -387,7 +387,7 @@
                                     <TextBlock Grid.Column="5" Text="{Binding Project.Branch}" VerticalAlignment="Center" FontFamily="{StaticResource MonoFontFamily}" FontSize="11.5" Margin="0,0,8,0" TextTrimming="CharacterEllipsis" Foreground="{DynamicResource SecondaryTextBrush}" />
                                     <TextBlock Grid.Column="6" Text="{Binding Project.WorkingTreeStatus}" VerticalAlignment="Center" FontFamily="{StaticResource MonoFontFamily}" FontSize="11.5" TextTrimming="CharacterEllipsis" Foreground="{Binding Project.WorkingTreeStatus, Converter={StaticResource TreeToBrush}}" />
                                     <TextBlock Grid.Column="7" Text="{Binding Project.SyncCompact}" VerticalAlignment="Center" FontFamily="{StaticResource MonoFontFamily}" FontSize="11.5" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" Foreground="{Binding Project, Converter={StaticResource SyncToBrush}}" />
-                                    <TextBlock Grid.Column="8" Text="{Binding Project.ArchiveStatus}" VerticalAlignment="Center" FontFamily="{StaticResource MonoFontFamily}" FontSize="11.5" TextTrimming="CharacterEllipsis" Foreground="{DynamicResource SecondaryTextBrush}" />
+                                    <TextBlock Grid.Column="8" Text="{Binding Project.ArchiveStatus}" ToolTip="{Binding Project.ArchiveStatusDetail}" VerticalAlignment="Center" FontFamily="{StaticResource MonoFontFamily}" FontSize="11.5" TextTrimming="CharacterEllipsis" Foreground="{DynamicResource SecondaryTextBrush}" />
 
                                     <StackPanel x:Name="rowActions" Grid.Column="3" Grid.ColumnSpan="5"
                                                 Orientation="Horizontal"
@@ -699,8 +699,9 @@
                             Orientation="Horizontal"
                             VerticalAlignment="Center"
                             Margin="12,0,0,0"
-                            Visibility="{Binding ArchiveSyncActive, Converter={StaticResource BoolToVisibility}}">
+                            Visibility="{Binding ArchiveSyncStatusText, Converter={StaticResource StringToVis}}">
                     <TextBlock Text="{Binding ArchiveSyncStatusText}"
+                               ToolTip="{Binding ArchiveSyncStatusText}"
                                FontFamily="{StaticResource MonoFontFamily}"
                                FontSize="11"
                                Foreground="{DynamicResource SecondaryTextBrush}"
@@ -713,7 +714,8 @@
                                  VerticalAlignment="Center"
                                  Minimum="0"
                                  Maximum="100"
-                                 Value="{Binding ArchiveSyncProgressPercent, Mode=OneWay}" />
+                                 Value="{Binding ArchiveSyncProgressPercent, Mode=OneWay}"
+                                 Visibility="{Binding ArchiveSyncActive, Converter={StaticResource BoolToVisibility}}" />
                 </StackPanel>
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                     <TextBlock Text="{Binding PortfolioSummaryLine}"

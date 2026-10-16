@@ -97,6 +97,39 @@ projects:
     }
 
     [Fact]
+    public void LoadPortfolio_ARCHIVE_SOURCE_COMPLETENESS_001_DuplicateIdsWithDifferentPaths_MustFailClosed()
+    {
+        var yaml = @"schema_version: 1
+projects:
+  - id: duplicate-project
+    path: 'C:\Repos\SafeSource'
+  - id: duplicate-project
+    path: 'C:\githubu\archive\WorkingForkInsideArchiveRoot'
+";
+        var path = WriteTempFile(yaml);
+        try
+        {
+            var provider = new PortfolioYamlProvider(path);
+            var result = provider.LoadPortfolio();
+
+            Assert.Contains(result.Issues, issue =>
+                issue.Severity == IssueSeverity.Error &&
+                string.Equals(issue.Code, "portfolio/project/id-duplicate", StringComparison.Ordinal));
+            Assert.Single(result.Projects);
+            Assert.Equal("duplicate-project", result.Projects[0].Id);
+            Assert.Equal(
+                Path.GetFullPath(@"C:\Repos\SafeSource"),
+                Path.GetFullPath(result.Projects[0].Path));
+            Assert.DoesNotContain(result.Projects, project =>
+                string.Equals(project.Path, @"C:\githubu\archive\WorkingForkInsideArchiveRoot", StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
     public void LoadPortfolio_StoreReference_ResolvesPath()
     {
         var yaml = @"schema_version: 1

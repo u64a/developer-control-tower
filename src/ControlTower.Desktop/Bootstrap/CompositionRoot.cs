@@ -1,11 +1,13 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Security;
 using ControlTower.Core.Composition;
 using ControlTower.Core.Contracts;
 using ControlTower.Core.Models;
 using ControlTower.Core.UseCases;
+using ControlTower.Core.Validation;
 using ControlTower.Infrastructure.Cache;
 using ControlTower.Infrastructure.Archive;
 using ControlTower.Infrastructure.Configuration;
@@ -155,6 +157,11 @@ namespace ControlTower.Desktop.Bootstrap
             var projectProvider = new ProjectYamlProvider();
             var metadataLocator = new ProjectMetadataLocator(
                 Path.GetDirectoryName(PortfolioPath) ?? string.Empty);
+            Func<ArchiveWorkingSourceInventory> archiveWorkingSourceInventoryProvider =
+                () => BuildArchiveWorkingSourceInventory(
+                    portfolioProvider,
+                    projectProvider,
+                    metadataLocator);
 
             var controlTowerService = new ControlTowerService(
                 portfolioProvider,
@@ -188,17 +195,16 @@ namespace ControlTower.Desktop.Bootstrap
             var cloneService = new AsyncCloneService(gitAdapter);
             var quarantineService = new QuarantineService();
 
-            // Archive wiring: read-only safety-net sync for the reserved
-            // "Archive" project group. Only built when a storage root is
-            // configured — the feature is opt-in via settings.yml.
-            IArchiveSyncService archiveSyncService = null;
-            IArchiveStateStore archiveStateStore = null;
-            if (!string.IsNullOrWhiteSpace(settings.ArchiveStorageRootPath))
+            // Archive wiring: every Archive-group clone uses the one effective
+            // root resolved from Settings (or its profile-based fallback).
+            ArchiveSyncService archiveSyncService = null;
+            IArchiveStateStore archiveStateStore = new ArchiveStateStore(LocalStateRoot);
+            if (settings.ArchiveStorageRootIsValid &&
+                !string.IsNullOrWhiteSpace(settings.ArchiveStorageRootPath))
             {
                 var gitHubToken = !string.IsNullOrWhiteSpace(settings.GitHubCredentialTarget)
                     ? CredentialStore.GetPassword(settings.GitHubCredentialTarget)
                     : string.Empty;
-                archiveStateStore = new ArchiveStateStore(LocalStateRoot);
                 archiveSyncService = new ArchiveSyncService(
                     gitAdapter,
                     cloneService,
@@ -288,9 +294,93 @@ namespace ControlTower.Desktop.Bootstrap
             {
                 LaunchEnvironments = settings.LaunchEnvironments ?? LaunchEnvironmentCatalog.CreateDefault(settings.VsCodeCommand),
                 ArchiveSyncService = archiveSyncService,
+                ArchiveSyncSafetyService = archiveSyncService,
                 ArchiveStateStore = archiveStateStore,
-                ArchiveStorageRootPath = settings.ArchiveStorageRootPath ?? string.Empty
+                ArchiveStorageRootPath = settings.ArchiveStorageRootPath ?? string.Empty,
+                ConfiguredArchiveStorageRootPath = settings.ConfiguredArchiveStorageRootPath ?? string.Empty,
+                SettingsIssues = settings.Issues,
+                ArchiveWorkingSourceInventoryProvider = archiveWorkingSourceInventoryProvider
             };
+        }
+
+        private static ArchiveWorkingSourceInventory BuildArchiveWorkingSourceInventory(
+            IPortfolioProvider portfolioProvider,
+            IProjectProvider projectProvider,
+            IProjectMetadataLocator metadataLocator)
+        {
+            try
+            {
+                var portfolio = portfolioProvider.LoadPortfolio();
+                if (portfolio == null)
+                {
+                    return ArchiveWorkingSourceInventory.Failed(
+                        "the registered project list could not be read");
+                }
+
+                if (portfolio.Issues.Any(issue => issue.Severity == IssueSeverity.Error))
+                {
+                    return ArchiveWorkingSourceInventory.Failed(
+                        "the registered project list contains validation errors");
+                }
+
+                var sources = new List<ArchiveWorkingSource>();
+                foreach (var projectRef in portfolio.Projects)
+                {
+                    if (projectRef == null)
+                    {
+                        return ArchiveWorkingSourceInventory.Failed(
+                            "a registered project entry is incomplete");
+                    }
+
+                    ProjectLoadResult projectLoad;
+                    try
+                    {
+                        var metadataRoot = metadataLocator.ResolveMetadataRoot(projectRef.Id);
+                        projectLoad = projectProvider.LoadProject(projectRef.Path, metadataRoot);
+                    }
+                    catch (Exception)
+                    {
+                        return ArchiveWorkingSourceInventory.Failed(
+                            "a registered project's working source could not be resolved");
+                    }
+
+                    if (projectLoad == null || projectLoad.Project == null)
+                    {
+                        return ArchiveWorkingSourceInventory.Failed(
+                            "registered project '" + projectRef.Id +
+                            "' metadata could not be loaded. Correct its .controltower\\project.yml before syncing archives.");
+                    }
+
+                    if (projectLoad.Issues.Any(issue => issue.Severity == IssueSeverity.Error))
+                    {
+                        var errors = projectLoad.Issues
+                            .Where(issue => issue.Severity == IssueSeverity.Error)
+                            .Select(issue => issue.Message)
+                            .Where(message => !string.IsNullOrWhiteSpace(message))
+                            .ToList();
+                        return ArchiveWorkingSourceInventory.Failed(
+                            "registered project '" + projectRef.Id +
+                            "' metadata has errors: " + string.Join(" ", errors) +
+                            " Correct its .controltower\\project.yml before syncing archives.");
+                    }
+
+                    var localPath = projectLoad.Project.Locations?.LocalPath;
+                    if (!string.IsNullOrWhiteSpace(localPath))
+                    {
+                        // ProjectYamlProvider owns the repository-standard
+                        // resolution of a real local source. ProjectRef.Path
+                        // can instead point at centrally stored metadata.
+                        sources.Add(new ArchiveWorkingSource(projectRef.Id, localPath));
+                    }
+                }
+
+                return ArchiveWorkingSourceInventory.Complete(sources);
+            }
+            catch (Exception)
+            {
+                return ArchiveWorkingSourceInventory.Failed(
+                    "the registered project list could not be resolved");
+            }
         }
 
         private string ResolveLibraryPath(string configured)
@@ -425,18 +515,36 @@ namespace ControlTower.Desktop.Bootstrap
 
         /// <summary>
         /// Read-only archive sync service for the reserved "Archive" project
-        /// group. Null when no archive storage root is configured.
+        /// group. Null when the effective root cannot be safely resolved or
+        /// an explicit archive setting is invalid.
         /// </summary>
         public IArchiveSyncService ArchiveSyncService { get; init; }
 
+        /// <summary>Archive root/source disjointness preflight service.</summary>
+        public IArchiveSyncSafetyService ArchiveSyncSafetyService { get; init; }
+
         /// <summary>
         /// Read-only accessor for persisted per-project archive state, used
-        /// by the UI to show archive sync status without re-syncing. Null
-        /// when no archive storage root is configured.
+        /// by the UI to show archive sync status without re-syncing.
         /// </summary>
         public IArchiveStateStore ArchiveStateStore { get; init; }
 
-        /// <summary>Configured storage root for archive clones. Empty disables the feature.</summary>
+        /// <summary>Effective global storage root for archive clones.</summary>
         public string ArchiveStorageRootPath { get; init; } = string.Empty;
+
+        /// <summary>Configured global archive root; empty means the default is active.</summary>
+        public string ConfiguredArchiveStorageRootPath { get; init; } = string.Empty;
+
+        /// <summary>
+        /// Produces a complete, profile-independent inventory of resolved
+        /// local working sources from the canonical portfolio. It must be
+        /// invoked immediately before each archive batch so registrations and
+        /// metadata edits made during the session cannot leave sync with a
+        /// stale safety inventory.
+        /// </summary>
+        public Func<ArchiveWorkingSourceInventory> ArchiveWorkingSourceInventoryProvider { get; init; }
+
+        /// <summary>Validation warnings raised while loading global settings.</summary>
+        public IReadOnlyList<ValidationIssue> SettingsIssues { get; init; } = Array.Empty<ValidationIssue>();
     }
 }

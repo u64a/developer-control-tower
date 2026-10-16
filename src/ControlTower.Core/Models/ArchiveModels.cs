@@ -67,6 +67,7 @@ namespace ControlTower.Core.Models
         {
             ProjectId = string.Empty;
             ArchivePath = string.Empty;
+            PreviousArchivePaths = new List<string>();
             LastSyncedCommitSha = string.Empty;
             LastError = string.Empty;
             LastReleaseTag = string.Empty;
@@ -77,6 +78,13 @@ namespace ControlTower.Core.Models
 
         /// <summary>Local filesystem path of the full clone backing this archive entry.</summary>
         public string ArchivePath { get; set; }
+
+        /// <summary>
+        /// Prior archive clone locations retained when the global storage root
+        /// changes. They are references only: the sync service never moves,
+        /// deletes, or updates those directories.
+        /// </summary>
+        public IList<string> PreviousArchivePaths { get; }
 
         public DateTime? LastSyncedUtc { get; set; }
 
@@ -130,11 +138,77 @@ namespace ControlTower.Core.Models
         DateTime? PublishedAtUtc,
         IReadOnlyList<ArchiveReleaseAsset> Assets);
 
+    /// <summary>
+    /// A resolved local working-source location registered in the portfolio.
+    /// Remote-only projects do not appear here because they have no local
+    /// working folder to protect.
+    /// </summary>
+    public sealed record ArchiveWorkingSource(string ProjectId, string LocalPath);
+
+    /// <summary>
+    /// The complete portfolio-derived set of local working-source locations.
+    /// A missing or failed inventory is deliberately distinguishable from a
+    /// complete inventory with no local sources so archive sync can fail
+    /// closed rather than silently bypassing the source-safety check.
+    /// </summary>
+    public sealed class ArchiveWorkingSourceInventory
+    {
+        public ArchiveWorkingSourceInventory(
+            IReadOnlyList<ArchiveWorkingSource>? workingSources,
+            string? failureMessage = null)
+        {
+            WorkingSources = workingSources;
+            FailureMessage = failureMessage ?? string.Empty;
+        }
+
+        public IReadOnlyList<ArchiveWorkingSource>? WorkingSources { get; }
+
+        public string FailureMessage { get; }
+
+        public bool IsComplete =>
+            WorkingSources != null && string.IsNullOrWhiteSpace(FailureMessage);
+
+        public static ArchiveWorkingSourceInventory Complete(
+            IReadOnlyList<ArchiveWorkingSource>? workingSources) =>
+            new ArchiveWorkingSourceInventory(workingSources ?? Array.Empty<ArchiveWorkingSource>());
+
+        public static ArchiveWorkingSourceInventory Failed(string failureMessage) =>
+            new ArchiveWorkingSourceInventory(null, failureMessage);
+    }
+
+    /// <summary>Input to the archive source-safety preflight.</summary>
+    public sealed record ArchiveSyncSafetyRequest(
+        string ArchiveStorageRoot,
+        ArchiveWorkingSourceInventory? WorkingSourceInventory);
+
+    /// <summary>Result of proving that the archive root is disjoint from all working sources.</summary>
+    public sealed record ArchiveSyncSafetyResult(
+        bool IsSafe,
+        string EffectiveArchiveStorageRoot,
+        string Message);
+
     /// <summary>Request to sync (clone-or-fetch) one archived project.</summary>
     public sealed record ArchiveSyncRequest(
         string ProjectId,
         string RemoteUrl,
-        string ArchiveStorageRoot);
+        string ArchiveStorageRoot)
+    {
+        /// <summary>
+        /// Required complete inventory of registered local working sources.
+        /// A request without it is rejected by the sync service.
+        /// </summary>
+        public ArchiveWorkingSourceInventory? WorkingSourceInventory { get; init; }
+
+        public ArchiveSyncRequest(
+            string projectId,
+            string remoteUrl,
+            string archiveStorageRoot,
+            ArchiveWorkingSourceInventory? workingSourceInventory)
+            : this(projectId, remoteUrl, archiveStorageRoot)
+        {
+            WorkingSourceInventory = workingSourceInventory;
+        }
+    }
 
     public enum ArchiveSyncStatus
     {

@@ -26,7 +26,7 @@ namespace ControlTower.Infrastructure.Configuration
             string libraryPath,
             UpdateOptions updateOptions)
         {
-            Write(settingsPath, stores, libraryPath, updateOptions, defaultLaunchEnvironment: null);
+            Write(settingsPath, stores, libraryPath, updateOptions, defaultLaunchEnvironment: null, archiveStorageRoot: null);
         }
 
         /// <param name="defaultLaunchEnvironment">
@@ -34,17 +34,26 @@ namespace ControlTower.Infrastructure.Configuration
         /// already in the file. Custom <c>launch.environments</c> entries are
         /// always carried over from the existing file.
         /// </param>
+        /// <param name="archiveStorageRoot">
+        /// Global archive root. Empty restores the profile-based default;
+        /// <c>null</c> preserves the existing setting.
+        /// </param>
         public void Write(
             string settingsPath,
             IReadOnlyList<RepoStore> stores,
             string libraryPath,
             UpdateOptions updateOptions,
-            string defaultLaunchEnvironment)
+            string defaultLaunchEnvironment,
+            string archiveStorageRoot = null)
         {
             var existingLaunch = ReadExistingLaunch(settingsPath);
+            var existingArchive = ReadExistingArchive(settingsPath);
             var defaultEnvironment = defaultLaunchEnvironment == null
                 ? LaunchEnvironmentCatalog.Normalize(existingLaunch?.DefaultEnvironment)
                 : LaunchEnvironmentCatalog.Normalize(defaultLaunchEnvironment);
+            var archiveRoot = archiveStorageRoot == null
+                ? existingArchive?.StorageRoot
+                : archiveStorageRoot.Trim();
             var dir = Path.GetDirectoryName(settingsPath);
             if (!string.IsNullOrEmpty(dir))
             {
@@ -60,6 +69,13 @@ namespace ControlTower.Infrastructure.Configuration
                 sb.AppendLine();
                 sb.AppendLine("library:");
                 sb.AppendLine($"  path: {YamlScalar.Quote(libraryPath)}");
+            }
+
+            if (archiveRoot != null)
+            {
+                sb.AppendLine();
+                sb.AppendLine("archive:");
+                sb.AppendLine($"  storage_root: {YamlScalar.Quote(archiveRoot)}");
             }
 
             if (updateOptions != null)
@@ -170,6 +186,28 @@ namespace ControlTower.Infrastructure.Configuration
                     .IgnoreUnmatchedProperties()
                     .Build();
                 return deserializer.Deserialize<SettingsYamlDto>(File.ReadAllText(settingsPath))?.Launch;
+            }
+            catch
+            {
+                // Malformed existing file: nothing to preserve.
+                return null;
+            }
+        }
+
+        private static ArchiveDto ReadExistingArchive(string settingsPath)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(settingsPath) || !File.Exists(settingsPath))
+                {
+                    return null;
+                }
+
+                var deserializer = new DeserializerBuilder()
+                    .WithNamingConvention(UnderscoredNamingConvention.Instance)
+                    .IgnoreUnmatchedProperties()
+                    .Build();
+                return deserializer.Deserialize<SettingsYamlDto>(File.ReadAllText(settingsPath))?.Archive;
             }
             catch
             {

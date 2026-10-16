@@ -28,6 +28,17 @@ namespace ControlTower.Core.Contracts
             CancellationToken ct);
     }
 
+    /// <summary>
+    /// Proves an archive root is disjoint from the complete registered set of
+    /// local working sources. The Desktop runs this for the whole batch before
+    /// invoking a per-project sync, and <see cref="IArchiveSyncService"/>
+    /// repeats it as a defense in depth.
+    /// </summary>
+    public interface IArchiveSyncSafetyService
+    {
+        ArchiveSyncSafetyResult ValidateSafety(ArchiveSyncSafetyRequest request);
+    }
+
     /// <summary>Persists <see cref="ArchiveRepoState"/> across launches.</summary>
     public interface IArchiveStateStore
     {

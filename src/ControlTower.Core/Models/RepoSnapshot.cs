@@ -119,9 +119,16 @@ namespace ControlTower.Core.Models
         public string ArchiveStatus { get; set; } = string.Empty;
 
         /// <summary>
-        /// Per-project Archive storage root override (see
-        /// <see cref="ProjectDefinition.ArchivePath"/>). Empty means the
-        /// global archive.storage_root setting is used.
+        /// Longer-form explanation behind <see cref="ArchiveStatus"/> (e.g.
+        /// the persisted sync error, or why a whole-batch preflight refused
+        /// to run) for display as a tooltip. Empty when there is nothing
+        /// more to say than the status word itself.
+        /// </summary>
+        public string ArchiveStatusDetail { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Retained for source compatibility with the removed per-project
+        /// archive override. It is always empty for loaded projects.
         /// </summary>
         public string ArchivePathOverride { get; set; } = string.Empty;
 

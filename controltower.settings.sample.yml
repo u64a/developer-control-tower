@@ -16,13 +16,18 @@ security:
   ado_credential_target: DCT-Ado
 
 # Local safety-net for forked repos. Projects whose Group is exactly
-# "Archive" (case-insensitive) get a full clone kept here, refreshed on
-# launch, and never deleted locally even if the upstream GitHub repo
-# disappears (e.g. a DMCA takedown). Leave empty to disable archiving.
-# A project can override this with its own storage root via the
-# project row's right-click "Set archive path..." menu (stored as
-# archive.path in that project's project.yml); blank there falls back
-# to this profile-wide default.
+# "Archive" (case-insensitive) get a full clone kept here, refreshed when you
+# choose "Sync all archives now", and never deleted locally even if the
+# upstream GitHub repo disappears (e.g. a DMCA takedown). The app also makes
+# one guarded attempt automatically each time it starts (after your portfolio
+# has loaded) — same safety checks as the manual action, no popup, no timer;
+# a refusal only shows as a status/row message you can act on.
+# Leave empty to use %USERPROFILE%\DeveloperControlTower\Archive. This is the
+# one root for every archive project; project.yml archive.path entries are
+# legacy and ignored. A non-empty value may be any fully qualified local
+# folder (including another drive), but not a drive/profile root, network or
+# device path, mapped-network drive alias, junction, or app-install folder.
+# An invalid setting disables archive syncing until corrected.
 archive:
   storage_root:
 

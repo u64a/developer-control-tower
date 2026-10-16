@@ -62,6 +62,22 @@ namespace ControlTower.Infrastructure.Configuration
                 settings.PowerShellCommand = "powershell.exe";
             }
 
+            var archiveStorageRoot = string.Empty;
+            if (settings.ArchiveStorageRootIsValid &&
+                !ArchiveStorageRootResolver.TryResolve(
+                    settings.ConfiguredArchiveStorageRootPath,
+                    out archiveStorageRoot))
+            {
+                settings.ArchiveStorageRootIsValid = false;
+                settings.Issues.Add(new ValidationIssue(
+                    IssueSeverity.Error,
+                    "settings/archive/default-root-unavailable",
+                    "Archive storage root could not be resolved safely. Archive syncing is disabled until Settings is corrected."));
+            }
+            settings.ArchiveStorageRootPath = settings.ArchiveStorageRootIsValid
+                ? archiveStorageRoot
+                : string.Empty;
+
             settings.LaunchEnvironments = BuildLaunchCatalog(settings);
 
             return settings;
@@ -333,16 +349,22 @@ namespace ControlTower.Infrastructure.Configuration
 
                 if (dto?.Archive != null && !string.IsNullOrWhiteSpace(dto.Archive.StorageRoot))
                 {
-                    if (IsAllowedConfiguredPath(dto.Archive.StorageRoot))
+                    var configuredArchiveRoot = dto.Archive.StorageRoot.Trim();
+                    settings.ConfiguredArchiveStorageRootPath = configuredArchiveRoot;
+                    if (ArchiveStorageRootResolver.TryResolve(dto.Archive.StorageRoot, out var archiveRoot))
                     {
-                        settings.ArchiveStorageRootPath = dto.Archive.StorageRoot;
+                        if (settings.ArchiveStorageRootIsValid)
+                        {
+                            settings.ConfiguredArchiveStorageRootPath = archiveRoot;
+                        }
                     }
                     else
                     {
+                        settings.ArchiveStorageRootIsValid = false;
                         settings.Issues.Add(new ValidationIssue(
-                            IssueSeverity.Warning,
-                            "settings/path/outside-allowed-roots",
-                            $"Ignored archive storage_root '{dto.Archive.StorageRoot}' — outside allowed user-local roots."));
+                            IssueSeverity.Error,
+                            "settings/archive/storage-root-invalid",
+                            $"Archive storage_root in '{Path.GetFileName(filePath)}' is invalid or unsafe. Archive syncing is disabled until it is corrected."));
                     }
                 }
 
@@ -431,7 +453,11 @@ namespace ControlTower.Infrastructure.Configuration
             }
             catch (Exception)
             {
-                // Malformed YAML — skip this settings file
+                settings.ArchiveStorageRootIsValid = false;
+                settings.Issues.Add(new ValidationIssue(
+                    IssueSeverity.Error,
+                    "settings/yaml/malformed",
+                    $"Could not read settings file '{Path.GetFileName(filePath)}'. Archive syncing is disabled until it is corrected."));
             }
 
             settings.SettingsSource = filePath;
@@ -446,9 +472,7 @@ namespace ControlTower.Infrastructure.Configuration
 
             try
             {
-                var expanded = Environment.ExpandEnvironmentVariables(path);
-                var full = Path.GetFullPath(expanded);
-                return AllowedSettingsRoots.IsUnderAllowedRoot(full, AllowedRoots);
+                return AllowedSettingsRoots.TryResolveConfiguredPath(path, AllowedRoots, out _);
             }
             catch
             {

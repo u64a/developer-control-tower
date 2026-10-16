@@ -62,6 +62,29 @@ public class ProjectRegistrationServiceTests : IDisposable
     }
 
     [Fact]
+    public void RegisterProject_ArchivePathRequest_DoesNotWriteLegacyArchiveSection()
+    {
+        var localPath = Path.Combine(_root, "archive-ignored");
+        Directory.CreateDirectory(localPath);
+
+        var svc = new ProjectRegistrationService(_portfolioPath);
+        var result = svc.RegisterProject(new ProjectRegistrationRequest
+        {
+            ProjectId = "archive-ignored",
+            DisplayName = "Archive Ignored",
+            LocalPath = localPath,
+            ArchivePath = @"C:\Legacy\Archive\PerProject"
+        });
+
+        Assert.True(result.Success);
+
+        var projectYaml = File.ReadAllText(
+            Path.Combine(_root, "portfolio-projects", "archive-ignored", ".controltower", "project.yml"));
+        Assert.DoesNotContain("\narchive:", projectYaml, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("archive.path", projectYaml, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void RegisterProject_DuplicateIdWithoutOverwrite_Rejected()
     {
         var path1 = Path.Combine(_root, "p1");

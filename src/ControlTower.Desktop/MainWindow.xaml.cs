@@ -103,8 +103,11 @@ namespace ControlTower.Desktop
             _viewModel = new MainViewModel(_controlTowerService, null, _updateService, _updateOptions);
             _viewModel.LaunchEnvironments = session.LaunchEnvironments;
             _viewModel.ArchiveSyncService = session.ArchiveSyncService;
+            _viewModel.ArchiveSyncSafetyService = session.ArchiveSyncSafetyService;
             _viewModel.ArchiveStateStore = session.ArchiveStateStore;
             _viewModel.ArchiveStorageRootPath = session.ArchiveStorageRootPath;
+            _viewModel.ArchiveWorkingSourceInventoryProvider =
+                session.ArchiveWorkingSourceInventoryProvider;
             _viewModel.PendingSelectionId = previousSelection;
             DataContext = _viewModel;
             RefreshProfileMenu();
@@ -125,14 +128,21 @@ namespace ControlTower.Desktop
             HookUpdateChip();
             await _viewModel.LoadAsync();
             SurfaceProfileIssues();
+            SurfaceSettingsIssues();
 
             // One-shot background seed of LOCAL repo states after first paint —
             // fills in the status lamps without blocking the UI or touching SSH.
             _ = _viewModel.SeedLocalStatesAsync();
 
-            // One-shot background sync of "Archive" group projects. No-ops
-            // silently when the feature isn't configured; drives the bottom
-            // status bar progress bar when active.
+            // One-shot guarded archive sync, once per window/session, now that
+            // LoadAsync has populated Projects and ApplySession has wired the
+            // archive services/provider. Runs the exact same canonical
+            // inventory + whole-batch safety preflight as the manual "Sync all
+            // archives now" action — no bypass, no timer/repeat. A refusal
+            // (missing service/root, no eligible targets, or a source-safety
+            // block) is logged and shown as "Blocked" rows / footer status
+            // only; it never pops the blocking dialog, which stays reserved
+            // for the explicit manual click so startup never modal-spams.
             _ = _viewModel.RunArchiveSyncAsync();
 
             if (_updateOptions.AutoCheckOnLaunch)
@@ -323,6 +333,18 @@ namespace ControlTower.Desktop
                 "Workspace profiles: " + _session.ProfileState.Issues[0].Message;
         }
 
+        private void SurfaceSettingsIssues()
+        {
+            if (_viewModel == null ||
+                _session?.SettingsIssues == null ||
+                _session.SettingsIssues.Count == 0)
+            {
+                return;
+            }
+
+            _viewModel.StatusMessage = "Settings: " + _session.SettingsIssues[0].Message;
+        }
+
         private void MainWindowClosed(object sender, EventArgs e)
         {
             try { _viewModel?.CancelBackgroundWork(); } catch { }
@@ -401,7 +423,9 @@ namespace ControlTower.Desktop
                 updateOptions: _updateOptions,
                 uninstallService: _root.UninstallService,
                 legacyInstallRoot: _root.LegacyInstallRoot,
-                launchEnvironments: _session.LaunchEnvironments);
+                launchEnvironments: _session.LaunchEnvironments,
+                archiveStorageRoot: _session.ConfiguredArchiveStorageRootPath,
+                effectiveArchiveStorageRoot: _session.ArchiveStorageRootPath);
             dialog.Owner = this;
 
             var result = dialog.ShowDialog();
@@ -418,7 +442,13 @@ namespace ControlTower.Desktop
             if (result == true && dialog.Saved)
             {
                 var writer = new SettingsWriter();
-                writer.Write(_settingsPath, dialog.ResultStores, dialog.ResultLibraryPath, dialog.ResultUpdateOptions, dialog.ResultDefaultLaunchEnvironment);
+                writer.Write(
+                    _settingsPath,
+                    dialog.ResultStores,
+                    dialog.ResultLibraryPath,
+                    dialog.ResultUpdateOptions,
+                    dialog.ResultDefaultLaunchEnvironment,
+                    dialog.ResultArchiveStorageRoot);
 
                 if (dialog.UpdateLaunched)
                 {
@@ -451,6 +481,7 @@ namespace ControlTower.Desktop
                 dialog.ProfileStateMutated)
             {
                 await _viewModel.LoadAsync();
+                SurfaceSettingsIssues();
             }
         }
 
@@ -807,17 +838,44 @@ namespace ControlTower.Desktop
             if (ArchiveGroup.Matches(project.Group))
             {
                 menu.Items.Add(new System.Windows.Controls.Separator());
-                var setArchivePath = new System.Windows.Controls.MenuItem { Header = "Set archive path…" };
-                setArchivePath.Click += (_, _) =>
+                var syncArchives = new System.Windows.Controls.MenuItem { Header = "Sync all archives now" };
+                syncArchives.IsEnabled = _session?.ArchiveSyncService != null &&
+                    !string.IsNullOrWhiteSpace(_session.ArchiveStorageRootPath);
+                if (!syncArchives.IsEnabled)
                 {
-                    var dlg = new SetArchivePathDialog(project.ArchivePathOverride) { Owner = this };
-                    if (dlg.ShowDialog() == true)
-                    {
-                        _viewModel.SetProjectArchivePath(project, dlg.ArchivePath);
-                    }
+                    syncArchives.ToolTip =
+                        "Archive syncing is disabled until the archive storage setting is corrected.";
+                }
+                syncArchives.Click += async (_, _) =>
+                {
+                    await _viewModel.RunArchiveSyncAsync();
+                    ShowArchiveSyncBlockedDialogIfNeeded(_viewModel.LastArchiveSyncOutcome);
                 };
-                menu.Items.Add(setArchivePath);
+                menu.Items.Add(syncArchives);
             }
+        }
+
+        /// <summary>
+        /// Explicit, unmissable refusal for a user-requested "Sync all
+        /// archives now" that the whole-batch safety preflight blocked — the
+        /// small grey footer text alone was easy to miss. Only reacts to a
+        /// <see cref="ArchiveSyncOutcomeKind.Blocked"/> outcome from this
+        /// same click; a normal completed pass (even with per-project
+        /// failures, which already show as an "Error" row) never pops this.
+        /// </summary>
+        private void ShowArchiveSyncBlockedDialogIfNeeded(ArchiveSyncOutcome outcome)
+        {
+            if (outcome == null || outcome.Kind != ArchiveSyncOutcomeKind.Blocked)
+            {
+                return;
+            }
+
+            MessageBox.Show(
+                this,
+                outcome.Message,
+                "Archive sync blocked",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
         }
 
         private void AddLaunchEnvironmentMenus(System.Windows.Controls.ContextMenu menu, ProjectOverview project)

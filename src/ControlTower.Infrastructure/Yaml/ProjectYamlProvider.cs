@@ -93,18 +93,10 @@ namespace ControlTower.Infrastructure.Yaml
 
                 if (dto.Archive != null && !string.IsNullOrWhiteSpace(dto.Archive.Path))
                 {
-                    if (ControlTower.Infrastructure.Configuration.AllowedSettingsRoots.IsUnderAllowedRoot(
-                        dto.Archive.Path, ControlTower.Infrastructure.Configuration.AllowedSettingsRoots.GetAllowedRoots()))
-                    {
-                        project.ArchivePath = dto.Archive.Path.Trim();
-                    }
-                    else
-                    {
-                        result.Issues.Add(new ValidationIssue(
-                            IssueSeverity.Warning,
-                            "project/archive/path-outside-allowed-roots",
-                            $"Ignored project archive path '{dto.Archive.Path}' — outside allowed user-local roots."));
-                    }
+                    result.Issues.Add(new ValidationIssue(
+                        IssueSeverity.Warning,
+                        "project/archive/path-ignored",
+                        "Ignored legacy project archive.path — configure the single archive storage root in Settings instead."));
                 }
 
                 if (dto.Planning != null)

@@ -57,6 +57,49 @@ icon appears when a tool isn't installed.
 
 ![Settings dialog showing the default launch environment selector](docs/images/settings-launch-environment.png)
 
+## Archive safety net
+
+Projects in the **Archive** group can keep a full, local safety-net clone of
+their history and verified release assets. Configure its one shared storage
+root in **Settings → Archive safety net**, then explicitly choose **Sync all
+archives now** from an Archive project’s row menu whenever you want. The app
+also makes one guarded attempt automatically each time it starts, after your
+portfolio has finished loading — the same canonical inventory and whole-batch
+safety preflight as the manual action, never a timer or repeat. A refusal at
+startup never pops the blocking dialog (that stays reserved for the manual
+click); it only shows as "Blocked"/status row text you can act on. Leaving the
+setting blank uses `%USERPROFILE%\DeveloperControlTower\Archive`; it does not
+disable archiving or use the profile directory itself.
+
+Changing the root refreshes status only. It never moves, deletes, or syncs
+existing archive data. A project whose old copy lives elsewhere is shown as
+needing sync until you explicitly create a copy in the new global root. Legacy
+`archive.path` entries in `project.yml` are ignored and reported as a warning;
+they no longer select an archive destination.
+
+The archive copy is always a dedicated clone, with its own release backup,
+separate from every registered local working source. This applies equally to
+forks and original upstream repositories: a matching `origin` or `upstream`
+remote never lets the app update, reset, or download releases into your working
+folder. Before every requested archive sync, the app reloads the complete
+registered local-source inventory from the canonical portfolio and project
+metadata, then physically resolves and checks the selected global root against it,
+including projects outside the active profile, group, filter, or search view.
+Unreadable project metadata or duplicate project IDs block the whole sync until
+the registry is corrected; warning-only legacy `archive.path` entries do not.
+Sync is blocked when the root equals a source folder, contains one, or sits
+inside one; move the source and update its registered path, or choose a
+separate archive root. Sibling folders such as `C:\archive` and
+`C:\archive-work` remain valid. Existing archive-owned clones below the global
+root are expected and do not count as working sources.
+
+Configured archive roots may be any fully qualified local folder, including a
+separate drive. Drive roots, the profile root, network/device paths, junctions,
+mapped-network drive aliases, and the running app's install folder are
+refused after their physical location is resolved. An invalid or malformed
+explicit archive setting disables archive syncing until it is corrected; it
+never silently falls back to the default location.
+
 ## Copilot CLI autostart
 
 A project can start a Copilot CLI session as part of its launch, so you don't

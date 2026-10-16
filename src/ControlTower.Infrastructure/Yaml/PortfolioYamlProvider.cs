@@ -182,8 +182,23 @@ namespace ControlTower.Infrastructure.Yaml
                 }
             }
 
-            var deduped = portfolio.Projects
+            var projectIdGroups = portfolio.Projects
                 .GroupBy(project => project.Id, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            foreach (var duplicate in projectIdGroups.Where(group => group.Count() > 1))
+            {
+                portfolio.Issues.Add(new ValidationIssue(
+                    IssueSeverity.Error,
+                    "portfolio/project/id-duplicate",
+                    "portfolio.yml registers project id '" + duplicate.Key +
+                    "' more than once. Keep one entry with that id, then retry archive sync."));
+            }
+
+            // Preserve the first visible project to avoid changing the existing
+            // portfolio projection. The Error above makes the complete source
+            // inventory fail closed, so a conflicting later path is never
+            // silently omitted from archive safety decisions.
+            var deduped = projectIdGroups
                 .Select(group => group.First())
                 .ToList();
 

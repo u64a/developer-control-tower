@@ -44,6 +44,12 @@ namespace ControlTower.Desktop
         /// </summary>
         public string ResultDefaultLaunchEnvironment { get; private set; }
 
+        /// <summary>
+        /// Chosen global archive root. Empty restores the profile-based
+        /// default rather than disabling archive safety-net storage.
+        /// </summary>
+        public string ResultArchiveStorageRoot { get; private set; } = string.Empty;
+
         public SettingsWindow(
             IReadOnlyList<RepoStore> currentStores,
             ICredentialStore credentialStore,
@@ -56,7 +62,9 @@ namespace ControlTower.Desktop
             UpdateOptions updateOptions = null,
             IApplicationUninstallService uninstallService = null,
             string legacyInstallRoot = null,
-            LaunchEnvironmentCatalog launchEnvironments = null)
+            LaunchEnvironmentCatalog launchEnvironments = null,
+            string archiveStorageRoot = null,
+            string effectiveArchiveStorageRoot = null)
         {
             InitializeComponent();
 
@@ -92,6 +100,8 @@ namespace ControlTower.Desktop
             UpdateBranchTextBox.Text = _initialUpdateOptions.Branch ?? string.Empty;
             UpdateAutoCheckBox.IsChecked = _initialUpdateOptions.AutoCheckOnLaunch;
             UpdateRepoRootTextBox.Text = _initialUpdateOptions.RepoRootOverride ?? string.Empty;
+            ArchiveStorageRootTextBox.Text = archiveStorageRoot ?? string.Empty;
+            UpdateEffectiveArchiveStorageRootText(effectiveArchiveStorageRoot);
 
             if (_updateService == null)
             {
@@ -677,6 +687,10 @@ namespace ControlTower.Desktop
             ResultLibraryPath = (LibraryPathTextBox.Text ?? string.Empty).Trim();
             ResultUpdateOptions = CaptureUpdateOptions();
             ResultDefaultLaunchEnvironment = CaptureDefaultLaunchEnvironment();
+            if (!TryCaptureArchiveStorageRoot())
+            {
+                return;
+            }
             Saved = true;
             DialogResult = true;
             Close();
@@ -698,6 +712,73 @@ namespace ControlTower.Desktop
             var autoCheck = UpdateAutoCheckBox.IsChecked == true;
             var repoRootOverride = (UpdateRepoRootTextBox.Text ?? string.Empty).Trim();
             return new UpdateOptions(branch, autoCheck, repoRootOverride);
+        }
+
+        private bool TryCaptureArchiveStorageRoot()
+        {
+            var configuredRoot = (ArchiveStorageRootTextBox.Text ?? string.Empty).Trim();
+            if (ArchiveStorageRootResolver.TryResolve(configuredRoot, out _))
+            {
+                ResultArchiveStorageRoot = configuredRoot;
+                return true;
+            }
+
+            MessageBox.Show(this,
+                "Archive storage root must be a safe, fully qualified local folder. Drive roots, your profile root, network/device paths, mapped-network drive aliases, junctions, and the app install folder are not allowed.",
+                "Validation",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+            return false;
+        }
+
+        private void ArchiveStorageRootTextChanged(object sender, TextChangedEventArgs e)
+        {
+            UpdateEffectiveArchiveStorageRootText(null);
+        }
+
+        private void UpdateEffectiveArchiveStorageRootText(string initialEffectiveRoot)
+        {
+            var configuredRoot = (ArchiveStorageRootTextBox.Text ?? string.Empty).Trim();
+            if (ArchiveStorageRootResolver.TryResolve(configuredRoot, out var effectiveRoot))
+            {
+                if (string.IsNullOrWhiteSpace(effectiveRoot))
+                {
+                    effectiveRoot = initialEffectiveRoot ?? string.Empty;
+                }
+
+                EffectiveArchiveStorageRootText.Text = "Effective location: " + effectiveRoot +
+                    (string.IsNullOrWhiteSpace(configuredRoot) ? " (default)" : string.Empty);
+                EffectiveArchiveStorageRootText.Foreground =
+                    TryFindResource("SecondaryTextBrush") as Brush ?? EffectiveArchiveStorageRootText.Foreground;
+                return;
+            }
+
+            EffectiveArchiveStorageRootText.Text =
+                "Invalid location. Choose a safe, fully qualified local folder.";
+            EffectiveArchiveStorageRootText.Foreground =
+                TryFindResource("WarningBrush") as Brush ?? EffectiveArchiveStorageRootText.Foreground;
+        }
+
+        private void BrowseArchiveStorageRootClick(object sender, RoutedEventArgs e)
+        {
+            var current = (ArchiveStorageRootTextBox.Text ?? string.Empty).Trim();
+            var initial = ArchiveStorageRootResolver.TryResolve(current, out var resolved)
+                ? resolved
+                : ArchiveStorageRootResolver.GetDefaultRoot();
+            var dlg = new Microsoft.Win32.OpenFolderDialog
+            {
+                Title = "Select the global archive storage root",
+                InitialDirectory = initial
+            };
+            if (dlg.ShowDialog(this) == true)
+            {
+                ArchiveStorageRootTextBox.Text = dlg.FolderName;
+            }
+        }
+
+        private void RestoreDefaultArchiveStorageRootClick(object sender, RoutedEventArgs e)
+        {
+            ArchiveStorageRootTextBox.Text = string.Empty;
         }
 
         private void BrowseUpdateRepoRootClick(object sender, RoutedEventArgs e)
@@ -771,6 +852,10 @@ namespace ControlTower.Desktop
                     ResultLibraryPath = (LibraryPathTextBox.Text ?? string.Empty).Trim();
                     ResultUpdateOptions = options;
                     ResultDefaultLaunchEnvironment = CaptureDefaultLaunchEnvironment();
+                    if (!TryCaptureArchiveStorageRoot())
+                    {
+                        return;
+                    }
                     Saved = true;
                     UpdateLaunched = true;
                     DialogResult = true;
