@@ -18,7 +18,7 @@
   <ItemGroup>
     <!-- Production -->
     <PackageVersion Include="SSH.NET" Version="2026.0.0" />
-    <PackageVersion Include="Velopack" Version="1.2.158" />
+    <PackageVersion Include="Velopack" Version="1.2.161" />
     <PackageVersion Include="YamlDotNet" Version="18.1.0" />
 
     <!--
