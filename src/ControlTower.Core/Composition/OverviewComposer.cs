@@ -25,7 +25,6 @@ namespace ControlTower.Core.Composition
             overview.Summary = ValueOr(project.Summary, "No summary provided.");
             overview.LifecycleState = ValueOr(project.LifecycleState, "unknown");
             overview.Group = ValueOr(project.Group, "Ungrouped");
-            overview.ArchivePathOverride = project.ArchivePath ?? string.Empty;
 
             // Archive-group projects are a static local safety-net copy, not
             // active development — override whatever lifecycle_state is on

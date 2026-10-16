@@ -13,6 +13,8 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{7792A9FC-7DA
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ControlTower.Tests", "src\ControlTower.Tests\ControlTower.Tests.csproj", "{95729636-233D-428A-B9F5-1CAC90898FB4}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ControlTower.Desktop.Tests", "src\ControlTower.Desktop.Tests\ControlTower.Desktop.Tests.csproj", "{227A86F6-45C6-489E-AA81-2EFA715C2AFB}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -35,11 +37,16 @@ Global
 		{95729636-233D-428A-B9F5-1CAC90898FB4}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{95729636-233D-428A-B9F5-1CAC90898FB4}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{95729636-233D-428A-B9F5-1CAC90898FB4}.Release|Any CPU.Build.0 = Release|Any CPU
+		{227A86F6-45C6-489E-AA81-2EFA715C2AFB}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{227A86F6-45C6-489E-AA81-2EFA715C2AFB}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{227A86F6-45C6-489E-AA81-2EFA715C2AFB}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{227A86F6-45C6-489E-AA81-2EFA715C2AFB}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{95729636-233D-428A-B9F5-1CAC90898FB4} = {7792A9FC-7DA6-4FF3-A8D2-4E40B8461567}
+		{227A86F6-45C6-489E-AA81-2EFA715C2AFB} = {7792A9FC-7DA6-4FF3-A8D2-4E40B8461567}
 	EndGlobalSection
 EndGlobal

@@ -17,7 +17,9 @@ namespace ControlTower.Infrastructure.Configuration
             GitHubCredentialTarget = string.Empty;
             AdoCredentialTarget = string.Empty;
             LibraryPath = string.Empty;
+            ConfiguredArchiveStorageRootPath = string.Empty;
             ArchiveStorageRootPath = string.Empty;
+            ArchiveStorageRootIsValid = true;
             Stores = new List<RepoStore>();
             Issues = new List<ValidationIssue>();
             UpdateOptions = UpdateOptions.Defaults();
@@ -66,12 +68,25 @@ namespace ControlTower.Infrastructure.Configuration
         public string LibraryPath { get; set; }
 
         /// <summary>
-        /// Root folder under which full clones for the reserved "Archive"
-        /// project group are kept. Empty disables archive syncing entirely —
-        /// this is an explicit, user-chosen local-safety-net feature, never
-        /// a hidden default location.
+        /// Raw configured global archive root. Empty means the default profile
+        /// location is in use.
+        /// </summary>
+        public string ConfiguredArchiveStorageRootPath { get; set; }
+
+        /// <summary>
+        /// Effective root folder under which every full Archive-group clone is
+        /// kept. It resolves to the profile-based default when no custom root
+        /// is configured.
         /// </summary>
         public string ArchiveStorageRootPath { get; set; }
+
+        /// <summary>
+        /// False when an existing settings file explicitly supplied an invalid
+        /// archive root or could not be parsed. Archive mutation must remain
+        /// disabled until the setting is corrected; it must not fall back to
+        /// the default in that state.
+        /// </summary>
+        public bool ArchiveStorageRootIsValid { get; set; }
 
         public List<RepoStore> Stores { get; set; }
 

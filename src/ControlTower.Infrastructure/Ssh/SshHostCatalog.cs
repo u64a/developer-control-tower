@@ -110,9 +110,7 @@ namespace ControlTower.Infrastructure.Ssh
 
             try
             {
-                var expanded = Environment.ExpandEnvironmentVariables(path);
-                var full = Path.GetFullPath(expanded);
-                return AllowedSettingsRoots.IsUnderAllowedRoot(full, AllowedRoots);
+                return AllowedSettingsRoots.TryResolveConfiguredPath(path, AllowedRoots, out _);
             }
             catch
             {

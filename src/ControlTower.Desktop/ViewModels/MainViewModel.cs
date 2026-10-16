@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Collections.ObjectModel;
 using System.Linq;
 using System.Reflection;
@@ -48,15 +49,25 @@ namespace ControlTower.Desktop.ViewModels
         // VS Code limitation, not something we can work around per-project.
         private bool _codeAdminLatched;
 
-        // Archive sync (reserved "Archive" project group safety-net).
-        // Both are set by MainWindow after session construction — null/empty
-        // means the feature is unconfigured and RunArchiveSyncAsync no-ops.
+        // Archive sync (reserved "Archive" project group safety-net). Both
+        // are set by MainWindow after session construction. The storage root
+        // is always the one global effective root.
         public IArchiveSyncService ArchiveSyncService { get; set; }
+        public IArchiveSyncSafetyService ArchiveSyncSafetyService { get; set; }
         public IArchiveStateStore ArchiveStateStore { get; set; }
         public string ArchiveStorageRootPath { get; set; }
+        /// <summary>
+        /// Production wiring supplies a canonical, complete inventory factory.
+        /// Tests may explicitly supply <see cref="ArchiveWorkingSourceInventory"/>
+        /// when exercising the service-facing safety contract in isolation.
+        /// </summary>
+        public Func<ArchiveWorkingSourceInventory> ArchiveWorkingSourceInventoryProvider { get; set; }
+        public ArchiveWorkingSourceInventory ArchiveWorkingSourceInventory { get; set; }
         private bool _archiveSyncActive;
         private string _archiveSyncStatusText;
         private double _archiveSyncProgressPercent;
+        private ArchiveSyncOutcome _lastArchiveSyncOutcome;
+        private string _archiveSyncBlockedMessage;
 
         public MainViewModel(ControlTowerService service)
             : this(service, null, null, null)
@@ -380,6 +391,49 @@ namespace ControlTower.Desktop.ViewModels
             }
         }
 
+        /// <summary>
+        /// Typed result of the most recent <see cref="RunArchiveSyncAsync"/>
+        /// call — including why it was refused, when it was — so callers
+        /// (the view, or a test) can react to the real outcome instead of
+        /// parsing <see cref="ArchiveSyncStatusText"/>.
+        /// </summary>
+        public ArchiveSyncOutcome LastArchiveSyncOutcome
+        {
+            get { return _lastArchiveSyncOutcome; }
+            private set
+            {
+                _lastArchiveSyncOutcome = value;
+                OnPropertyChanged();
+            }
+        }
+
+        /// <summary>
+        /// Raised once per <see cref="RunArchiveSyncAsync"/> call, after
+        /// <see cref="LastArchiveSyncOutcome"/> is updated. Only ever raised
+        /// from an explicit user-requested sync — never from the background
+        /// portfolio scan — so a subscriber (e.g. a blocking dialog) never
+        /// spams the user on its own.
+        /// </summary>
+        public event EventHandler<ArchiveSyncOutcome> ArchiveSyncCompleted;
+
+        /// <summary>
+        /// The full safety-refusal message for the most recent
+        /// <see cref="RunArchiveSyncAsync"/> call, or <c>null</c> when that
+        /// call was not refused. Distinct from <see cref="ArchiveSyncStatusText"/>
+        /// (which also carries in-progress/background-refresh text) so a
+        /// modal or other "this must be unmistakable" surface can react to
+        /// the refusal alone, without parsing the footer string.
+        /// </summary>
+        public string ArchiveSyncBlockedMessage
+        {
+            get { return _archiveSyncBlockedMessage; }
+            private set
+            {
+                _archiveSyncBlockedMessage = value;
+                OnPropertyChanged();
+            }
+        }
+
         /// <summary>0-100 completion percentage across all archived projects in the current pass.</summary>
         public double ArchiveSyncProgressPercent
         {
@@ -611,37 +665,6 @@ namespace ControlTower.Desktop.ViewModels
             StatusMessage = result.Success
                 ? project.DisplayName + " opens in " + _launchEnvironments.Resolve(request.LaunchEnvironment).DisplayName +
                   (request.LaunchEnvironment.Length == 0 ? " (default)" : string.Empty)
-                : result.Message;
-            if (result.Success)
-            {
-                Load();
-                ApplyProjectView(def.Id);
-            }
-        }
-
-        /// <summary>
-        /// Persists a per-project Archive storage root override in its
-        /// project.yml. Empty clears it, falling back to the global
-        /// archive.storage_root setting.
-        /// </summary>
-        public void SetProjectArchivePath(ProjectOverview project, string archivePath)
-        {
-            if (project == null) return;
-
-            var def = _service.GetProjectDefinition(new ProjectRef { Id = project.Id, Path = project.SourcePath });
-            if (def == null)
-            {
-                StatusMessage = "Could not load project to update.";
-                return;
-            }
-
-            var request = BuildRequestFromDefinition(def, project.SourcePath);
-            request.ArchivePath = archivePath ?? string.Empty;
-
-            var result = _service.RegisterProject(request);
-            StatusMessage = result.Success
-                ? project.DisplayName + " archive path set to " +
-                  (string.IsNullOrWhiteSpace(request.ArchivePath) ? "(default)" : request.ArchivePath)
                 : result.Message;
             if (result.Success)
             {
@@ -1098,6 +1121,7 @@ namespace ControlTower.Desktop.ViewModels
 
         public void Load()
         {
+            ClearStaleArchiveSyncBlockSignal();
             _allProjects.Clear();
             var items = _service.LoadPortfolio();
             foreach (var item in items)
@@ -1124,6 +1148,7 @@ namespace ControlTower.Desktop.ViewModels
         /// </summary>
         public async Task LoadAsync()
         {
+            ClearStaleArchiveSyncBlockSignal();
             IsBusy = true;
             StatusMessage = "Loading portfolio...";
 
@@ -1435,19 +1460,9 @@ namespace ControlTower.Desktop.ViewModels
         }
 
         /// <summary>
-        /// One-shot background sync of every project in the reserved
-        /// "Archive" group: full clone/fetch + verified latest-release
-        /// capture against each project's own remote. No-ops silently when
-        /// the feature isn't configured (no storage root / service) or no
-        /// project currently carries the Archive group. Never blocks
-        /// startup and never deletes a local archive on failure — failures
-        /// are surfaced via <see cref="ArchiveRepoState"/>, not thrown.
-        /// </summary>
-        /// <summary>
         /// Sets <see cref="ProjectOverview.ArchiveStatus"/> from persisted
         /// <see cref="ArchiveRepoState"/> for display. No-ops (leaves it
-        /// blank) for any project outside the reserved "Archive" group, or
-        /// when the feature isn't configured.
+        /// blank) for any project outside the reserved "Archive" group.
         /// </summary>
         private void ApplyArchiveStatus(ProjectOverview project)
         {
@@ -1458,12 +1473,74 @@ namespace ControlTower.Desktop.ViewModels
 
             if (ArchiveStateStore == null)
             {
-                project.ArchiveStatus = "Not configured";
+                project.ArchiveStatus = "Pending";
+                project.ArchiveStatusDetail = string.Empty;
                 return;
             }
 
             var state = ArchiveStateStore.Load(project.Id);
-            project.ArchiveStatus = DescribeArchiveStatus(state);
+            project.ArchiveStatus = IsCurrentArchiveRoot(project, state)
+                ? DescribeArchiveStatus(state)
+                : "Needs sync";
+            project.ArchiveStatusDetail = DescribeArchiveStatusDetail(project, state);
+        }
+
+        /// <summary>
+        /// Longer-form reason behind <see cref="ArchiveStatus"/> for the row
+        /// tooltip — in particular the persisted sync error so a per-project
+        /// failure's actual cause is visible, not just the generic "Error"
+        /// word.
+        /// </summary>
+        private string DescribeArchiveStatusDetail(ProjectOverview project, ArchiveRepoState state)
+        {
+            if (!IsCurrentArchiveRoot(project, state))
+            {
+                return string.Empty;
+            }
+
+            if (state.UpstreamStatus == ArchiveUpstreamStatus.Unavailable)
+            {
+                return "The upstream remote could not be reached on the last sync attempt.";
+            }
+
+            if (!string.IsNullOrWhiteSpace(state.LastError))
+            {
+                return state.LastError;
+            }
+
+            return state.LastSyncedUtc.HasValue
+                ? "Last synced " + state.LastSyncedUtc.Value.ToLocalTime().ToString("g") + "."
+                : string.Empty;
+        }
+
+        private bool IsCurrentArchiveRoot(ProjectOverview project, ArchiveRepoState state)
+        {
+            if (project == null ||
+                state == null ||
+                string.IsNullOrWhiteSpace(state.ArchivePath) ||
+                string.IsNullOrWhiteSpace(ArchiveStorageRootPath))
+            {
+                return false;
+            }
+
+            try
+            {
+                var projectId = project.Id ?? string.Empty;
+                foreach (var invalid in Path.GetInvalidFileNameChars())
+                {
+                    projectId = projectId.Replace(invalid, '_');
+                }
+
+                var expected = Path.GetFullPath(Path.Combine(ArchiveStorageRootPath, projectId));
+                return string.Equals(
+                    Path.GetFullPath(state.ArchivePath),
+                    expected,
+                    StringComparison.OrdinalIgnoreCase);
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         private static string DescribeArchiveStatus(ArchiveRepoState state)
@@ -1486,26 +1563,76 @@ namespace ControlTower.Desktop.ViewModels
             return "Synced";
         }
 
+        /// <summary>
+        /// Runs a user-requested sync of every Archive-group project against
+        /// the one effective global storage root. Every guarded exit (no
+        /// service, no root, nothing eligible, or a whole-batch safety
+        /// refusal) is surfaced through <see cref="LastArchiveSyncOutcome"/>
+        /// / <see cref="ArchiveSyncCompleted"/> and logged — none of them is
+        /// a silent no-op. This method's own signature stays <c>Task</c> (no
+        /// return value) so existing guarded call-site checks keep matching;
+        /// callers that need the result read <see cref="LastArchiveSyncOutcome"/>
+        /// immediately after awaiting this call.
+        /// </summary>
         public async Task RunArchiveSyncAsync()
         {
-            if (ArchiveSyncService == null)
+            if (ArchiveSyncActive)
             {
                 return;
             }
 
+            ArchiveSyncBlockedMessage = null;
+
+            if (ArchiveSyncService == null)
+            {
+                const string message = "Archive sync is unavailable: the archive sync service is not configured.";
+                AppLogger.Warn("Archive", message);
+                SetArchiveSyncOutcome(ArchiveSyncOutcome.ServiceUnavailable(message));
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(ArchiveStorageRootPath))
+            {
+                const string message = "Archive sync is unavailable: no archive storage root is configured.";
+                AppLogger.Warn("Archive", message);
+                SetArchiveSyncOutcome(ArchiveSyncOutcome.InvalidStorageRoot(message));
+                return;
+            }
+
             var targets = _allProjects
-                .Where(p => ArchiveGroup.Matches(p.Group) && !string.IsNullOrWhiteSpace(p.RemoteUrl) &&
-                            (!string.IsNullOrWhiteSpace(ArchiveStorageRootPath) || !string.IsNullOrWhiteSpace(p.ArchivePathOverride)))
+                .Where(p => ArchiveGroup.Matches(p.Group) && !string.IsNullOrWhiteSpace(p.RemoteUrl))
                 .ToList();
 
             if (targets.Count == 0)
             {
+                const string message = "Archive sync skipped: no Archive-group project has a remote URL to sync.";
+                AppLogger.Info("Archive", message);
+                SetArchiveSyncOutcome(ArchiveSyncOutcome.NoEligibleTargets(message));
+                return;
+            }
+
+            var workingSourceInventory = RefreshArchiveWorkingSourceInventory();
+            var safetyRequest = new ArchiveSyncSafetyRequest(
+                ArchiveStorageRootPath,
+                workingSourceInventory);
+            var safety = ArchiveSyncSafetyService?.ValidateSafety(safetyRequest);
+            if (safety == null || !safety.IsSafe)
+            {
+                ArchiveSyncProgressPercent = 0;
+                ArchiveSyncStatusText = safety == null
+                    ? "Archive sync blocked: safety preflight is unavailable."
+                    : "Archive sync blocked: " + safety.Message;
+                AppLogger.Warn("Archive", ArchiveSyncStatusText);
+                ArchiveSyncBlockedMessage = ArchiveSyncStatusText;
+                var blockedProjectIds = MarkArchiveTargetsBlocked(targets, ArchiveSyncStatusText);
+                SetArchiveSyncOutcome(ArchiveSyncOutcome.Blocked(ArchiveSyncStatusText, blockedProjectIds));
                 return;
             }
 
             ArchiveSyncActive = true;
             var succeeded = 0;
             var failed = 0;
+            var failures = new List<ArchiveSyncFailureDetail>();
 
             try
             {
@@ -1520,10 +1647,13 @@ namespace ControlTower.Desktop.ViewModels
                         ArchiveSyncStatusText = $"{project.DisplayName ?? project.Id}: {message}";
                     });
 
-                    var storageRoot = string.IsNullOrWhiteSpace(project.ArchivePathOverride)
-                        ? ArchiveStorageRootPath
-                        : project.ArchivePathOverride;
-                    var request = new ArchiveSyncRequest(project.Id, project.RemoteUrl, storageRoot);
+                    var request = new ArchiveSyncRequest(
+                        project.Id,
+                        project.RemoteUrl,
+                        ArchiveStorageRootPath,
+                        workingSourceInventory);
+
+                    string failureReason = null;
 
                     try
                     {
@@ -1535,16 +1665,42 @@ namespace ControlTower.Desktop.ViewModels
                         else
                         {
                             failed++;
+                            failureReason = string.IsNullOrWhiteSpace(result.Message)
+                                ? "Archive sync failed for an unspecified reason."
+                                : result.Message;
+                            failures.Add(new ArchiveSyncFailureDetail(project.Id, project.DisplayName ?? project.Id, failureReason));
+                            AppLogger.Warn(
+                                "Archive",
+                                "Sync failed for '" + (project.DisplayName ?? project.Id) + "' (" + project.Id + "): " + failureReason);
                         }
                     }
-                    catch
+                    catch (Exception ex)
                     {
-                        // One repo failing to archive must not abort the rest of the pass.
+                        // One repo failing to archive must not abort the rest of the pass,
+                        // but the cause must not be swallowed either.
                         failed++;
+                        failureReason = ex.Message;
+                        failures.Add(new ArchiveSyncFailureDetail(project.Id, project.DisplayName ?? project.Id, failureReason));
+                        AppLogger.Error(
+                            "Archive",
+                            "Sync threw for '" + (project.DisplayName ?? project.Id) + "' (" + project.Id + ")",
+                            ex);
                     }
                     finally
                     {
-                        ApplySeededProject(project);
+                        // A failure this pass must win over whatever the state
+                        // store still has on file (often nothing yet, if the
+                        // engine never got to persist) — the row must show
+                        // *this* run's actionable reason, not a stale/blank
+                        // store-derived "Needs sync".
+                        if (failureReason != null)
+                        {
+                            ApplyFailedSyncResult(project, failureReason);
+                        }
+                        else
+                        {
+                            ApplySeededProject(project);
+                        }
                     }
                 }
             }
@@ -1553,41 +1709,163 @@ namespace ControlTower.Desktop.ViewModels
                 ArchiveSyncProgressPercent = 100;
                 ArchiveSyncStatusText = failed == 0
                     ? $"Archive sync complete \u2014 {succeeded} repo(s) up to date"
-                    : $"Archive sync complete \u2014 {succeeded} ok, {failed} failed";
+                    : $"Archive sync complete \u2014 {succeeded} ok, {failed} failed: {string.Join("; ", failures.Select(f => f.Reason))}";
                 ArchiveSyncActive = false;
+                SetArchiveSyncOutcome(ArchiveSyncOutcome.Completed(succeeded, failed, failures, ArchiveSyncStatusText));
             }
+        }
+
+        private void SetArchiveSyncOutcome(ArchiveSyncOutcome outcome)
+        {
+            LastArchiveSyncOutcome = outcome;
+            ArchiveSyncCompleted?.Invoke(this, outcome);
+        }
+
+        /// <summary>
+        /// Clears a stale whole-batch "Blocked" signal left over from a
+        /// previous <see cref="RunArchiveSyncAsync"/> refusal, on a fresh
+        /// portfolio reload of this same <see cref="MainViewModel"/> instance
+        /// — per-row status already recomputes correctly from the store on
+        /// reload, but the VM-level <see cref="ArchiveSyncBlockedMessage"/> /
+        /// <see cref="LastArchiveSyncOutcome"/> / footer text otherwise
+        /// survive untouched (they are not row state). A reload is not an
+        /// outcome of a user-requested sync, so this never raises
+        /// <see cref="ArchiveSyncCompleted"/>. No-ops while a sync is
+        /// actively running so it never stomps on live progress.
+        /// </summary>
+        private void ClearStaleArchiveSyncBlockSignal()
+        {
+            if (ArchiveSyncActive)
+            {
+                return;
+            }
+
+            ArchiveSyncBlockedMessage = null;
+
+            if (LastArchiveSyncOutcome != null && LastArchiveSyncOutcome.Kind == ArchiveSyncOutcomeKind.Blocked)
+            {
+                LastArchiveSyncOutcome = null;
+            }
+
+            if (!string.IsNullOrEmpty(ArchiveSyncStatusText) &&
+                ArchiveSyncStatusText.IndexOf("Archive sync blocked:", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                ArchiveSyncStatusText = string.Empty;
+            }
+        }
+
+        /// <summary>
+        /// Marks every targeted Archive-group project "Blocked" for display
+        /// only — no archive state is persisted and nothing is moved or
+        /// synced. The next successful sync pass (or a fresh portfolio load)
+        /// overwrites this with the real, store-backed status.
+        /// </summary>
+        private IReadOnlyList<string> MarkArchiveTargetsBlocked(IReadOnlyList<ProjectOverview> targets, string reason)
+        {
+            var blockedProjectIds = new List<string>();
+            foreach (var project in targets)
+            {
+                if (project == null)
+                {
+                    continue;
+                }
+
+                project.ArchiveStatus = "Blocked";
+                project.ArchiveStatusDetail = reason;
+                blockedProjectIds.Add(project.Id);
+                RefreshProjectRowDisplay(project);
+            }
+
+            RebuildTally();
+            return blockedProjectIds;
+        }
+
+        private ArchiveWorkingSourceInventory RefreshArchiveWorkingSourceInventory()
+        {
+            if (ArchiveWorkingSourceInventoryProvider == null)
+            {
+                return ArchiveWorkingSourceInventory ??
+                    global::ControlTower.Core.Models.ArchiveWorkingSourceInventory.Failed(
+                        "the registered working-source inventory was not supplied.");
+            }
+
+            try
+            {
+                var inventory = ArchiveWorkingSourceInventoryProvider();
+                ArchiveWorkingSourceInventory = inventory ??
+                    global::ControlTower.Core.Models.ArchiveWorkingSourceInventory.Failed(
+                        "the registered working-source inventory could not be refreshed.");
+            }
+            catch (Exception ex)
+            {
+                ArchiveWorkingSourceInventory = global::ControlTower.Core.Models.ArchiveWorkingSourceInventory.Failed(
+                    "the registered working-source inventory could not be refreshed: " + ex.Message);
+            }
+
+            return ArchiveWorkingSourceInventory;
         }
 
         private void ApplySeededProject(ProjectOverview refreshed)
         {
             ApplyArchiveStatus(refreshed);
+            RefreshProjectRowDisplay(refreshed);
+            RebuildTally();
+        }
 
+        /// <summary>
+        /// Marks one project "Error" for THIS pass's actual failure reason —
+        /// used instead of <see cref="ApplySeededProject"/> when a per-project
+        /// sync failed or threw, so the row shows the real, actionable cause
+        /// rather than whatever (often still blank/"Needs sync") the state
+        /// store has on file if the engine never got to persist anything.
+        /// No archive state is written here either; this is the same
+        /// ephemeral, display-only marking <see cref="MarkArchiveTargetsBlocked"/>
+        /// uses for a whole-batch refusal.
+        /// </summary>
+        private void ApplyFailedSyncResult(ProjectOverview project, string reason)
+        {
+            project.ArchiveStatus = "Error";
+            project.ArchiveStatusDetail = reason;
+            RefreshProjectRowDisplay(project);
+            RebuildTally();
+        }
+
+        /// <summary>
+        /// Swaps <paramref name="project"/> into <see cref="_allProjects"/>
+        /// and its matching <see cref="ProjectRow"/>. <see cref="ProjectRow.Project"/>'s
+        /// setter always re-notifies — including when the incoming reference
+        /// is the very same, already-wrapped instance — so a real sync
+        /// result or a whole-batch block that mutates a display field
+        /// (ArchiveStatus, ArchiveStatusDetail) on that same instance is
+        /// still observed by the row, without disturbing its
+        /// checkbox/group/selection state.
+        /// </summary>
+        private void RefreshProjectRowDisplay(ProjectOverview project)
+        {
             for (var i = 0; i < _allProjects.Count; i++)
             {
-                if (string.Equals(_allProjects[i].Id, refreshed.Id, StringComparison.OrdinalIgnoreCase))
+                if (string.Equals(_allProjects[i].Id, project.Id, StringComparison.OrdinalIgnoreCase))
                 {
-                    _allProjects[i] = refreshed;
+                    _allProjects[i] = project;
                     break;
                 }
             }
 
             for (var i = 0; i < Projects.Count; i++)
             {
-                if (string.Equals(Projects[i].Id, refreshed.Id, StringComparison.OrdinalIgnoreCase))
+                if (string.Equals(Projects[i].Id, project.Id, StringComparison.OrdinalIgnoreCase))
                 {
-                    var wasSelected = SelectedProject != null && SelectedProject.Id == refreshed.Id;
+                    var wasSelected = SelectedProject != null && SelectedProject.Id == project.Id;
                     // Swap the wrapped overview in place so the row keeps its
                     // checkbox/selection state while the lamp and metadata update.
-                    Projects[i].Project = refreshed;
+                    Projects[i].Project = project;
                     if (wasSelected)
                     {
-                        SelectedProject = refreshed;
+                        SelectedProject = project;
                     }
                     break;
                 }
             }
-
-            RebuildTally();
         }
 
         /// <summary>Cancels any in-flight background seed (called on app exit).</summary>

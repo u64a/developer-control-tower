@@ -57,9 +57,9 @@ namespace ControlTower.Infrastructure.Yaml.Dto
     public sealed class ProjectArchiveDto
     {
         /// <summary>
-        /// Per-project storage root override for the Archive safety-net
-        /// clone. Blank/omitted falls back to the global
-        /// archive.storage_root from settings.yml.
+        /// Legacy per-project storage root. It is deserialized solely to
+        /// report that the setting is ignored; archive destinations are
+        /// configured globally in settings.yml.
         /// </summary>
         [YamlMember(Alias = "path")]
         public string Path { get; set; }

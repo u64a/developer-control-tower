@@ -27,12 +27,17 @@ namespace ControlTower.Infrastructure.Archive
         public ArchiveRepoState Load(string projectId)
         {
             var state = new ArchiveRepoState { ProjectId = projectId ?? string.Empty };
-            if (string.IsNullOrWhiteSpace(projectId))
+            if (!ArchiveProjectIdentity.IsSafe(projectId))
             {
                 return state;
             }
 
-            var path = GetPath(projectId);
+            var path = GetPath(projectId ?? string.Empty);
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                return state;
+            }
+
             if (!File.Exists(path))
             {
                 return state;
@@ -65,8 +70,17 @@ namespace ControlTower.Infrastructure.Archive
 
                 switch (key)
                 {
+                    case "ProjectId":
+                        state.ProjectId = value;
+                        break;
                     case "ArchivePath":
                         state.ArchivePath = value;
+                        break;
+                    case "PreviousArchivePaths":
+                        foreach (var archivePath in value.Split('|', StringSplitOptions.RemoveEmptyEntries))
+                        {
+                            state.PreviousArchivePaths.Add(archivePath);
+                        }
                         break;
                     case "LastSyncedUtc":
                         state.LastSyncedUtc = ParseDate(value);
@@ -109,7 +123,7 @@ namespace ControlTower.Infrastructure.Archive
 
         public void Save(ArchiveRepoState state)
         {
-            if (state == null || string.IsNullOrWhiteSpace(state.ProjectId))
+            if (state == null || !ArchiveProjectIdentity.IsSafe(state.ProjectId))
             {
                 return;
             }
@@ -118,7 +132,9 @@ namespace ControlTower.Infrastructure.Archive
 
             var lines = new List<string>
             {
+                "ProjectId=" + (state.ProjectId ?? string.Empty),
                 "ArchivePath=" + (state.ArchivePath ?? string.Empty),
+                "PreviousArchivePaths=" + string.Join("|", state.PreviousArchivePaths ?? Array.Empty<string>()),
                 "LastSyncedUtc=" + FormatDate(state.LastSyncedUtc),
                 "LastSyncedCommitSha=" + (state.LastSyncedCommitSha ?? string.Empty),
                 "UpstreamStatus=" + state.UpstreamStatus,
@@ -130,7 +146,12 @@ namespace ControlTower.Infrastructure.Archive
                 "UpstreamFullName=" + (state.UpstreamFullName ?? string.Empty)
             };
 
-            var path = GetPath(state.ProjectId);
+            var path = GetPath(state.ProjectId ?? string.Empty);
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                return;
+            }
+
             var tempPath = path + ".tmp";
             File.WriteAllLines(tempPath, lines);
             File.Copy(tempPath, path, overwrite: true);
@@ -155,13 +176,9 @@ namespace ControlTower.Infrastructure.Archive
 
         private string GetPath(string projectId)
         {
-            var safe = projectId;
-            foreach (var invalid in Path.GetInvalidFileNameChars())
-            {
-                safe = safe.Replace(invalid, '_');
-            }
-
-            return Path.Combine(_stateFolder, safe + ".state");
+            return ArchiveProjectIdentity.IsSafe(projectId)
+                ? Path.Combine(_stateFolder, projectId + ".state")
+                : string.Empty;
         }
     }
 }

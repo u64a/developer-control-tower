@@ -247,6 +247,40 @@
                                TextWrapping="Wrap"
                                Margin="0,2,0,0" />
 
+                    <!-- Archive storage -->
+                    <TextBlock Text="ARCHIVE SAFETY NET"
+                               Style="{StaticResource SectionTitleStyle}"
+                               Margin="0,16,0,4" />
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBox Grid.Column="0"
+                                 x:Name="ArchiveStorageRootTextBox"
+                                 TextChanged="ArchiveStorageRootTextChanged" />
+                        <Button Grid.Column="1"
+                                Content="Browse..."
+                                Margin="8,0,0,0"
+                                Click="BrowseArchiveStorageRootClick" />
+                        <Button Grid.Column="2"
+                                Content="Use default"
+                                Margin="8,0,0,0"
+                                Click="RestoreDefaultArchiveStorageRootClick" />
+                    </Grid>
+                    <TextBlock x:Name="EffectiveArchiveStorageRootText"
+                               Foreground="{DynamicResource SecondaryTextBrush}"
+                               FontFamily="{StaticResource MonoFontFamily}"
+                               FontSize="11"
+                               TextWrapping="Wrap"
+                               Margin="0,2,0,0" />
+                    <TextBlock Text="Every Archive-group project uses this one storage root. Leave it blank to use the profile-based default. Changing it never moves, deletes, or syncs existing archives."
+                               Foreground="{DynamicResource SecondaryTextBrush}"
+                               FontSize="12"
+                               TextWrapping="Wrap"
+                               Margin="0,2,0,0" />
+
                     <!-- Updates -->
                     <TextBlock Text="UPDATES"
                                Style="{StaticResource SectionTitleStyle}"
