@@ -106,7 +106,7 @@
         "dependencies": {
           "ControlTower.Core": "[1.0.0, )",
           "SSH.NET": "[2026.0.0, )",
-          "Velopack": "[1.2.158, )",
+          "Velopack": "[1.2.161, )",
           "YamlDotNet": "[18.1.0, )"
         }
       },
@@ -115,7 +115,7 @@
         "dependencies": {
           "ControlTower.Core": "[1.0.0, )",
           "ControlTower.Infrastructure": "[1.0.0, )",
-          "Velopack": "[1.2.158, )"
+          "Velopack": "[1.2.161, )"
         }
       },
       "Microsoft.Extensions.DependencyInjection.Abstractions": {
@@ -145,9 +145,9 @@
       },
       "Velopack": {
         "type": "CentralTransitive",
-        "requested": "[1.2.158, )",
-        "resolved": "1.2.158",
-        "contentHash": "wQN38beVrAf0WzFMnZtl7UmwxqwaJ7xVYypqITdOI4YUTYch2UvE+xAjg9msfaitVDtgfWeIcGsjRNQ65C03ZQ=="
+        "requested": "[1.2.161, )",
+        "resolved": "1.2.161",
+        "contentHash": "OpHNacIumnkhaaX3ZlQ/TCR4YPOJvud2/PAOoWb6o+mIrLwIVA275I5wAgt4q/1O2VrJeDwR1qFQyqzG4lUArg=="
       },
       "YamlDotNet": {
         "type": "CentralTransitive",
