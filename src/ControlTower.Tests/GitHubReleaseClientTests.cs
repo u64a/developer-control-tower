@@ -10,6 +10,15 @@ namespace ControlTower.Tests;
 
 public class GitHubReleaseClientTests
 {
+    public static TheoryData<string> UrlsWithEmbeddedCredentials(string url) => new()
+    {
+        new UriBuilder(url)
+        {
+            UserName = "fixture-user",
+            Password = "fixture-password"
+        }.Uri.AbsoluteUri
+    };
+
     [Theory]
     [InlineData("https://forge.example.test/eden-emu/eden.git", "https://forge.example.test/api/v1/repos/eden-emu/eden/releases/latest")]
     [InlineData("https://forge.example.test:8443/eden-emu/eden/", "https://forge.example.test:8443/api/v1/repos/eden-emu/eden/releases/latest")]
@@ -87,7 +96,7 @@ public class GitHubReleaseClientTests
 
     [Theory]
     [InlineData("http://forge.example.test/org/repo.git")]
-    [InlineData("https://user:password@forge.example.test/org/repo.git")]
+    [MemberData(nameof(UrlsWithEmbeddedCredentials), "https://forge.example.test/org/repo.git")]
     [InlineData("https://forge.example.test/org/repo.git?token=example")]
     [InlineData("https://forge.example.test/org/repo.git#fragment")]
     [InlineData("https://forge.example.test/org%2Frepo/other.git")]
@@ -309,7 +318,7 @@ public class GitHubReleaseClientTests
 
     [Theory]
     [InlineData("http://downloads.example.test/app.zip")]
-    [InlineData("https://user:password@downloads.example.test/app.zip")]
+    [MemberData(nameof(UrlsWithEmbeddedCredentials), "https://downloads.example.test/app.zip")]
     [InlineData("https://downloads.example.test/app.zip#fragment")]
     [InlineData("https://127.0.0.1/app.zip")]
     public async Task DownloadAndVerifyAsync_UnsafeRedirect_RejectsBeforeWriting(string target)
