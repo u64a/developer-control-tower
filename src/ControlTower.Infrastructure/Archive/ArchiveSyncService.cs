@@ -1,7 +1,9 @@
 #nullable enable
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Net.Http;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
@@ -18,8 +20,8 @@ namespace ControlTower.Infrastructure.Archive
     /// Orchestrates the local safety-net copy for one <see cref="ArchiveGroup"/>
     /// project: first-run full clone, subsequent-run fetch + fast-forward,
     /// dead-upstream detection via <c>git ls-remote</c>, and a hash-verified
-    /// latest-release capture. Read-only against GitHub; never deletes the
-    /// local clone, even when the upstream has disappeared.
+    /// latest-release capture. Read-only against hosted remotes; never
+    /// deletes the local clone, even when the upstream has disappeared.
     /// </summary>
     public sealed class ArchiveSyncService : IArchiveSyncService, IArchiveSyncSafetyService
     {
@@ -360,15 +362,38 @@ namespace ControlTower.Infrastructure.Archive
                     progress,
                     ct).ConfigureAwait(false);
 
+                if (state.ReleaseStatus == ArchiveReleaseStatus.Incomplete)
+                {
+                    var releaseError = string.IsNullOrWhiteSpace(state.LastReleaseError)
+                        ? "Current release capture did not complete."
+                        : state.LastReleaseError;
+                    state.LastError = releaseError;
+                    _stateStore.Save(state);
+                    return new ArchiveSyncResult(
+                        request.ProjectId,
+                        ArchiveSyncStatus.Failed,
+                        releaseError,
+                        state.LastSyncedCommitSha);
+                }
+
                 _stateStore.Save(state);
+                var message = state.ReleaseStatus == ArchiveReleaseStatus.NoCurrentRelease
+                    ? "Archive source synced; no current release is published."
+                    : "Archive source and current release archived at " + archivePath;
                 return new ArchiveSyncResult(
-                    request.ProjectId, ArchiveSyncStatus.Succeeded, "Archive synced at " + archivePath, state.LastSyncedCommitSha);
+                    request.ProjectId, ArchiveSyncStatus.Succeeded, message, state.LastSyncedCommitSha);
             }
             catch (OperationCanceledException)
             {
                 throw;
             }
-            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException || ex is GitNotFoundException)
+            catch (Exception ex) when (
+                ex is IOException ||
+                ex is UnauthorizedAccessException ||
+                ex is HttpRequestException ||
+                ex is InvalidDataException ||
+                ex is NotSupportedException ||
+                ex is GitNotFoundException)
             {
                 state.LastError = ex.Message;
                 _stateStore.Save(state);
@@ -822,167 +847,365 @@ namespace ControlTower.Infrastructure.Archive
             IProgress<string>? progress,
             CancellationToken ct)
         {
-            ArchiveReleaseInfo? release;
             try
             {
-                release = await _releaseClient.GetLatestReleaseAsync(releaseSourceUrl, ct).ConfigureAwait(false);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                AppLogger.Warn("Archive", "Release lookup failed for " + request.ProjectId + ": " + ex.Message);
-                return;
-            }
-
-            if (release == null ||
-                string.Equals(release.TagName, state.LastReleaseTag, StringComparison.Ordinal) &&
-                state.LastReleaseIntegrity == ArchiveReleaseIntegrity.Verified)
-            {
-                return;
-            }
-
-            progress?.Report("Capturing release " + release.TagName + ": " + request.ProjectId);
-
-            if (!TryRevalidateArchiveDestination(
-                    request,
-                    archiveStorageRoot,
-                    request.ProjectId,
-                    archivePath,
-                    out _))
-            {
-                AppLogger.Warn(
-                    "Archive",
-                    "Release capture skipped for " + request.ProjectId +
-                    " because its archive destination could not be revalidated safely.");
-                return;
-            }
-
-            if (!TryGetSafeChildPath(archivePath, "releases", out var releasesRoot) ||
-                !TryGetSafeChildPath(
-                    releasesRoot,
-                    ".incoming-" + Slugify(release.TagName),
-                    out var incomingDir))
-            {
-                AppLogger.Warn(
-                    "Archive",
-                    "Release capture skipped for " + request.ProjectId +
-                    " because its archive content path is unsafe.");
-                return;
-            }
-
-            Directory.CreateDirectory(incomingDir);
-            if (AllowedSettingsRoots.HasExistingReparsePoint(incomingDir))
-            {
-                AppLogger.Warn(
-                    "Archive",
-                    "Release capture skipped for " + request.ProjectId +
-                    " because its incoming directory is a reparse point.");
-                return;
-            }
-
-            var anyMismatch = false;
-            var anyUnverifiable = false;
-            foreach (var asset in release.Assets)
-            {
-                if (!TryGetSafeChildPath(incomingDir, Slugify(asset.Name), out var destination))
+                var release = await _releaseClient.GetLatestReleaseAsync(releaseSourceUrl, ct).ConfigureAwait(false);
+                if (release == null)
                 {
-                    AppLogger.Warn(
-                        "Archive",
-                        "Release capture skipped for " + request.ProjectId +
-                        " because an asset destination is unsafe.");
-                    TryDeleteDirectory(incomingDir);
+                    MarkNoCurrentRelease(state);
                     return;
                 }
 
-                var integrity = await _releaseClient
-                    .DownloadAndVerifyAsync(asset, destination, ct)
-                    .ConfigureAwait(false);
-
-                if (integrity == ArchiveReleaseIntegrity.Mismatch)
+                var expectedAssetNames = GetCanonicalAssetNames(release);
+                if (string.Equals(release.TagName, state.LastReleaseTag, StringComparison.Ordinal) &&
+                    state.ReleaseStatus == ArchiveReleaseStatus.Captured &&
+                    state.LastReleaseIntegrity == ArchiveReleaseIntegrity.Verified &&
+                    HasCompleteReleaseCapture(archivePath, state, expectedAssetNames))
                 {
-                    anyMismatch = true;
+                    return;
                 }
-                else if (integrity == ArchiveReleaseIntegrity.Unverifiable)
+
+                progress?.Report("Capturing release " + release.TagName + ": " + request.ProjectId);
+
+                if (!TryRevalidateArchiveDestination(
+                        request,
+                        archiveStorageRoot,
+                        request.ProjectId,
+                        archivePath,
+                        out _))
                 {
-                    anyUnverifiable = true;
+                    throw new IOException("Archive destination could not be revalidated before release capture.");
                 }
-            }
 
-            if (!TryRevalidateArchiveDestination(
-                    request,
-                    archiveStorageRoot,
-                    request.ProjectId,
-                    archivePath,
-                    out _))
-            {
-                AppLogger.Warn(
-                    "Archive",
-                    "Release capture stopped for " + request.ProjectId +
-                    " because its archive destination changed during download.");
-                return;
-            }
-
-            if (anyMismatch)
-            {
-                AppLogger.Warn(
-                    "Archive",
-                    "Release asset hash mismatch for " + request.ProjectId + " " + release.TagName +
-                    " — kept the previous release, discarded the download.");
-                TryDeleteDirectory(incomingDir);
-                state.LastReleaseIntegrity = ArchiveReleaseIntegrity.Mismatch;
-                return;
-            }
-
-            if (!TryGetSafeChildPath(releasesRoot, Slugify(release.TagName), out var finalDir))
-            {
-                AppLogger.Warn(
-                    "Archive",
-                    "Release capture skipped for " + request.ProjectId +
-                    " because its final directory is unsafe.");
-                TryDeleteDirectory(incomingDir);
-                return;
-            }
-
-            if (Directory.Exists(finalDir))
-            {
-                TryDeleteDirectory(finalDir);
-            }
-            Directory.Move(incomingDir, finalDir);
-
-            if (!anyUnverifiable)
-            {
-                // Fully verified: safe to drop every previous release folder
-                // to keep disk usage bounded to the current release only.
-                foreach (var dir in Directory.EnumerateDirectories(releasesRoot))
+                if (!TryGetSafeChildPath(archivePath, "releases", out var releasesRoot) ||
+                    !TryGetSafeChildPath(releasesRoot, Slugify(release.TagName), out var finalDir))
                 {
-                    if (!string.Equals(dir, finalDir, StringComparison.OrdinalIgnoreCase))
+                    throw new IOException("Archive release content path is unsafe.");
+                }
+
+                string? incomingDir = null;
+                var incomingPromoted = false;
+                try
+                {
+                    incomingDir = GetFreshReleasePath(
+                        releasesRoot,
+                        ".incoming-" + Slugify(release.TagName) + "-");
+                    Directory.CreateDirectory(incomingDir);
+                    if (AllowedSettingsRoots.HasExistingReparsePoint(incomingDir))
                     {
-                        TryDeleteDirectory(dir);
+                        throw new IOException("Release staging directory is a reparse point.");
+                    }
+
+                    var anyMismatch = false;
+                    var anyUnverifiable = false;
+                    foreach (var asset in release.Assets)
+                    {
+                        if (!TryGetSafeChildPath(incomingDir, Slugify(asset.Name), out var destination))
+                        {
+                            throw new IOException("Release asset destination is unsafe.");
+                        }
+
+                        var integrity = await _releaseClient
+                            .DownloadAndVerifyAsync(asset, destination, ct)
+                            .ConfigureAwait(false);
+
+                        if (integrity == ArchiveReleaseIntegrity.Mismatch)
+                        {
+                            anyMismatch = true;
+                        }
+                        else if (integrity == ArchiveReleaseIntegrity.Unverifiable)
+                        {
+                            anyUnverifiable = true;
+                        }
+                    }
+
+                    if (!TryRevalidateArchiveDestination(
+                            request,
+                            archiveStorageRoot,
+                            request.ProjectId,
+                            archivePath,
+                            out _))
+                    {
+                        throw new IOException("Archive destination changed during release download.");
+                    }
+
+                    if (anyMismatch)
+                    {
+                        var mismatchMessage =
+                            "Release asset hash mismatch for " + request.ProjectId + " " + release.TagName +
+                            " — kept the previous release and discarded the download.";
+                        AppLogger.Warn("Archive", mismatchMessage);
+                        MarkReleaseIncomplete(state, mismatchMessage, ArchiveReleaseIntegrity.Mismatch);
+                        return;
+                    }
+
+                    PromoteIncomingRelease(incomingDir, finalDir, releasesRoot, Directory.Move);
+                    incomingPromoted = true;
+
+                    if (!anyUnverifiable)
+                    {
+                        // Fully verified: safe to drop every previous release folder
+                        // to keep disk usage bounded to the current release only.
+                        foreach (var dir in Directory.EnumerateDirectories(releasesRoot))
+                        {
+                            if (!string.Equals(dir, finalDir, StringComparison.OrdinalIgnoreCase))
+                            {
+                                DeleteDirectoryOrThrow(dir, "previous release directory");
+                            }
+                        }
+                    }
+
+                    MarkReleaseCaptured(state, release, finalDir, expectedAssetNames, anyUnverifiable);
+                }
+                finally
+                {
+                    if (!incomingPromoted && incomingDir != null)
+                    {
+                        try
+                        {
+                            DeleteDirectoryOrThrow(incomingDir, "incomplete release staging directory");
+                        }
+                        catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
+                        {
+                            AppLogger.Error(
+                                "Archive",
+                                "Release staging cleanup failed for " + request.ProjectId + ": " + ex.Message,
+                                ex);
+                            throw new IOException(
+                                "Release staging cleanup failed at " + incomingDir + ": " + ex.Message,
+                                ex);
+                        }
                     }
                 }
             }
+            catch (NotSupportedException ex)
+            {
+                MarkReleaseUnsupported(state, ex.Message);
+                throw;
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                MarkReleaseIncomplete(state, ex.Message, ArchiveReleaseIntegrity.NotCaptured);
+                throw;
+            }
+        }
 
+        private static void MarkNoCurrentRelease(ArchiveRepoState state)
+        {
+            state.ReleaseStatus = ArchiveReleaseStatus.NoCurrentRelease;
+            state.LastReleaseTag = string.Empty;
+            state.LastReleaseIntegrity = ArchiveReleaseIntegrity.NotCaptured;
+            state.LastReleaseCapturedUtc = null;
+            state.LastReleaseDirectoryName = string.Empty;
+            state.LastReleaseAssetNames.Clear();
+            state.LastReleaseError = string.Empty;
+        }
+
+        private static void MarkReleaseCaptured(
+            ArchiveRepoState state,
+            ArchiveReleaseInfo release,
+            string finalDir,
+            IReadOnlyList<string> expectedAssetNames,
+            bool anyUnverifiable)
+        {
+            state.ReleaseStatus = ArchiveReleaseStatus.Captured;
             state.LastReleaseTag = release.TagName;
             state.LastReleaseIntegrity = anyUnverifiable
                 ? ArchiveReleaseIntegrity.Unverifiable
                 : ArchiveReleaseIntegrity.Verified;
             state.LastReleaseCapturedUtc = DateTime.UtcNow;
+            state.LastReleaseDirectoryName = Path.GetFileName(finalDir);
+            state.LastReleaseAssetNames.Clear();
+            foreach (var assetName in expectedAssetNames)
+            {
+                state.LastReleaseAssetNames.Add(assetName);
+            }
+
+            state.LastReleaseError = string.Empty;
         }
 
-        private static void TryDeleteDirectory(string path)
+        private static void MarkReleaseIncomplete(
+            ArchiveRepoState state,
+            string error,
+            ArchiveReleaseIntegrity integrity)
         {
-            try
+            state.ReleaseStatus = ArchiveReleaseStatus.Incomplete;
+            state.LastReleaseTag = string.Empty;
+            state.LastReleaseIntegrity = integrity;
+            state.LastReleaseCapturedUtc = null;
+            state.LastReleaseDirectoryName = string.Empty;
+            state.LastReleaseAssetNames.Clear();
+            state.LastReleaseError = error ?? string.Empty;
+        }
+
+        private static void MarkReleaseUnsupported(ArchiveRepoState state, string error)
+        {
+            state.ReleaseStatus = ArchiveReleaseStatus.Unsupported;
+            state.LastReleaseTag = string.Empty;
+            state.LastReleaseIntegrity = ArchiveReleaseIntegrity.NotCaptured;
+            state.LastReleaseCapturedUtc = null;
+            state.LastReleaseDirectoryName = string.Empty;
+            state.LastReleaseAssetNames.Clear();
+            state.LastReleaseError = error ?? string.Empty;
+        }
+
+        private static IReadOnlyList<string> GetCanonicalAssetNames(ArchiveReleaseInfo release)
+        {
+            var assetNames = new List<string>();
+            var distinctNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var asset in release.Assets)
             {
-                if (Directory.Exists(path) && !AllowedSettingsRoots.HasExistingReparsePoint(path))
+                if (asset == null || string.IsNullOrWhiteSpace(asset.Name))
                 {
-                    Directory.Delete(path, recursive: true);
+                    throw new InvalidDataException("Release metadata contains an asset without a name.");
+                }
+
+                var assetName = Slugify(asset.Name);
+                if (!distinctNames.Add(assetName))
+                {
+                    throw new InvalidDataException(
+                        "Release metadata contains assets that collide after local filename normalization.");
+                }
+
+                assetNames.Add(assetName);
+            }
+
+            return assetNames;
+        }
+
+        private static bool HasCompleteReleaseCapture(
+            string archivePath,
+            ArchiveRepoState state,
+            IReadOnlyList<string> expectedAssetNames)
+        {
+            if (state == null ||
+                state.ReleaseStatus != ArchiveReleaseStatus.Captured ||
+                (state.LastReleaseIntegrity != ArchiveReleaseIntegrity.Verified &&
+                 state.LastReleaseIntegrity != ArchiveReleaseIntegrity.Unverifiable) ||
+                string.IsNullOrWhiteSpace(state.LastReleaseDirectoryName) ||
+                !TryGetSafeChildPath(archivePath, "releases", out var releasesRoot) ||
+                !TryGetSafeChildPath(releasesRoot, state.LastReleaseDirectoryName, out var releaseDirectory) ||
+                !Directory.Exists(releaseDirectory))
+            {
+                return false;
+            }
+
+            if (state.LastReleaseAssetNames.Count != expectedAssetNames.Count ||
+                !state.LastReleaseAssetNames
+                    .OrderBy(assetName => assetName, StringComparer.OrdinalIgnoreCase)
+                    .SequenceEqual(
+                        expectedAssetNames.OrderBy(assetName => assetName, StringComparer.OrdinalIgnoreCase),
+                        StringComparer.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            foreach (var assetName in expectedAssetNames)
+            {
+                if (!TryGetSafeChildPath(releaseDirectory, assetName, out var assetPath) ||
+                    !File.Exists(assetPath))
+                {
+                    return false;
                 }
             }
-            catch (IOException)
+
+            return true;
+        }
+
+        private static string GetFreshReleasePath(string releasesRoot, string prefix)
+        {
+            for (var attempt = 0; attempt < 10; attempt++)
             {
+                if (!TryGetSafeChildPath(
+                        releasesRoot,
+                        prefix + Guid.NewGuid().ToString("N"),
+                        out var candidate))
+                {
+                    throw new IOException("Release staging path is unsafe.");
+                }
+
+                if (!Directory.Exists(candidate) && !File.Exists(candidate))
+                {
+                    return candidate;
+                }
             }
-            catch (UnauthorizedAccessException)
+
+            throw new IOException("Could not create a unique release staging path.");
+        }
+
+        internal static void PromoteIncomingRelease(
+            string incomingDir,
+            string finalDir,
+            string releasesRoot,
+            Action<string, string> moveDirectory)
+        {
+            if (moveDirectory == null)
             {
+                throw new ArgumentNullException(nameof(moveDirectory));
             }
+
+            string? backupDir = null;
+            if (Directory.Exists(finalDir))
+            {
+                backupDir = GetFreshReleasePath(
+                    releasesRoot,
+                    ".backup-" + Path.GetFileName(finalDir) + "-");
+                moveDirectory(finalDir, backupDir);
+            }
+
+            try
+            {
+                moveDirectory(incomingDir, finalDir);
+            }
+            catch (Exception promotionException) when (
+                promotionException is IOException ||
+                promotionException is UnauthorizedAccessException)
+            {
+                if (backupDir == null)
+                {
+                    throw;
+                }
+
+                try
+                {
+                    moveDirectory(backupDir, finalDir);
+                }
+                catch (Exception restorationException) when (
+                    restorationException is IOException ||
+                    restorationException is UnauthorizedAccessException)
+                {
+                    throw new IOException(
+                        "Release promotion failed and the previous capture could not be restored. " +
+                        "The previous capture remains at " + backupDir + ".",
+                        new AggregateException(promotionException, restorationException));
+                }
+
+                throw;
+            }
+
+            if (backupDir != null)
+            {
+                DeleteDirectoryOrThrow(backupDir, "replaced release backup");
+            }
+        }
+
+        private static void DeleteDirectoryOrThrow(string path, string description)
+        {
+            if (!Directory.Exists(path))
+            {
+                return;
+            }
+
+            if (AllowedSettingsRoots.HasExistingReparsePoint(path))
+            {
+                throw new IOException("Refused to delete reparse-point " + description + " at " + path + ".");
+            }
+
+            Directory.Delete(path, recursive: true);
         }
 
         private static bool TryGetSafeChildPath(string parent, string childName, out string path)
