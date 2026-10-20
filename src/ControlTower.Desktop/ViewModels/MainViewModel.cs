@@ -1493,14 +1493,55 @@ namespace ControlTower.Desktop.ViewModels
         /// </summary>
         private string DescribeArchiveStatusDetail(ProjectOverview project, ArchiveRepoState state)
         {
-            if (!IsCurrentArchiveRoot(project, state))
+            if (!HasConfiguredArchiveRoot(project, state))
             {
                 return string.Empty;
             }
 
+            if (!IsCurrentArchiveRoot(project, state))
+            {
+                return "The archive source clone is missing from the configured archive root.";
+            }
+
             if (state.UpstreamStatus == ArchiveUpstreamStatus.Unavailable)
             {
-                return "The upstream remote could not be reached on the last sync attempt.";
+                return string.IsNullOrWhiteSpace(state.LastError)
+                    ? "The upstream remote could not be reached on the last sync attempt."
+                    : "The upstream remote could not be reached: " + state.LastError;
+            }
+
+            if (HasCurrentSourceSyncFailure(state))
+            {
+                return state.LastError;
+            }
+
+            switch (state.ReleaseStatus)
+            {
+                case ArchiveReleaseStatus.NotChecked:
+                    return "The archive source is present, but its current release has not been checked yet.";
+                case ArchiveReleaseStatus.NoCurrentRelease:
+                    return "The provider confirmed that this repository has no current release.";
+                case ArchiveReleaseStatus.Captured:
+                    if (!HasCompleteReleaseCapture(state))
+                    {
+                        return "The expected current release folder or captured asset is missing locally.";
+                    }
+
+                    var capturedAt = state.LastReleaseCapturedUtc.HasValue
+                        ? "Archive source and current release captured " +
+                          state.LastReleaseCapturedUtc.Value.ToLocalTime().ToString("g") + "."
+                        : "Archive source and current release captured locally.";
+                    return state.LastReleaseIntegrity == ArchiveReleaseIntegrity.Unverifiable
+                        ? capturedAt + " The provider did not supply a checksum."
+                        : capturedAt;
+                case ArchiveReleaseStatus.Incomplete:
+                    return string.IsNullOrWhiteSpace(state.LastReleaseError)
+                        ? "The current release lookup or capture did not complete."
+                        : state.LastReleaseError;
+                case ArchiveReleaseStatus.Unsupported:
+                    return string.IsNullOrWhiteSpace(state.LastReleaseError)
+                        ? "The remote does not expose a supported release API."
+                        : state.LastReleaseError;
             }
 
             if (!string.IsNullOrWhiteSpace(state.LastError))
@@ -1514,6 +1555,23 @@ namespace ControlTower.Desktop.ViewModels
         }
 
         private bool IsCurrentArchiveRoot(ProjectOverview project, ArchiveRepoState state)
+        {
+            if (!HasConfiguredArchiveRoot(project, state))
+            {
+                return false;
+            }
+
+            try
+            {
+                return Directory.Exists(Path.Combine(state.ArchivePath, ".git"));
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private bool HasConfiguredArchiveRoot(ProjectOverview project, ArchiveRepoState state)
         {
             if (project == null ||
                 state == null ||
@@ -1552,15 +1610,102 @@ namespace ControlTower.Desktop.ViewModels
 
             if (state.UpstreamStatus == ArchiveUpstreamStatus.Unavailable)
             {
-                return "Upstream gone";
+                return "Upstream unavailable";
             }
 
-            if (!string.IsNullOrWhiteSpace(state.LastError))
+            if (HasCurrentSourceSyncFailure(state))
             {
-                return "Error";
+                return "Sync incomplete";
             }
 
-            return "Synced";
+            switch (state.ReleaseStatus)
+            {
+                case ArchiveReleaseStatus.NotChecked:
+                    return "Release unchecked";
+                case ArchiveReleaseStatus.NoCurrentRelease:
+                    return "No current release";
+                case ArchiveReleaseStatus.Captured:
+                    if (!HasCompleteReleaseCapture(state))
+                    {
+                        return "Release missing";
+                    }
+
+                    return "Archived";
+                case ArchiveReleaseStatus.Incomplete:
+                    return "Release incomplete";
+                case ArchiveReleaseStatus.Unsupported:
+                    return "Release unsupported";
+            }
+
+            return "Release unchecked";
+        }
+
+        private static bool HasCurrentSourceSyncFailure(ArchiveRepoState state) =>
+            state != null &&
+            !string.IsNullOrWhiteSpace(state.LastError) &&
+            !string.Equals(
+                state.LastError,
+                state.LastReleaseError,
+                StringComparison.Ordinal);
+
+        private static bool HasCompleteReleaseCapture(ArchiveRepoState state)
+        {
+            if (state == null ||
+                state.ReleaseStatus != ArchiveReleaseStatus.Captured ||
+                (state.LastReleaseIntegrity != ArchiveReleaseIntegrity.Verified &&
+                 state.LastReleaseIntegrity != ArchiveReleaseIntegrity.Unverifiable) ||
+                !TryGetSafeArchiveChildPath(state.ArchivePath, "releases", out var releasesRoot) ||
+                !TryGetSafeArchiveChildPath(
+                    releasesRoot,
+                    state.LastReleaseDirectoryName,
+                    out var releaseDirectory) ||
+                !Directory.Exists(releaseDirectory))
+            {
+                return false;
+            }
+
+            foreach (var assetName in state.LastReleaseAssetNames)
+            {
+                if (!TryGetSafeArchiveChildPath(releaseDirectory, assetName, out var assetPath) ||
+                    !File.Exists(assetPath))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static bool TryGetSafeArchiveChildPath(string parent, string childName, out string path)
+        {
+            path = string.Empty;
+            if (string.IsNullOrWhiteSpace(parent) ||
+                string.IsNullOrWhiteSpace(childName) ||
+                childName.IndexOf(Path.DirectorySeparatorChar) >= 0 ||
+                childName.IndexOf(Path.AltDirectorySeparatorChar) >= 0)
+            {
+                return false;
+            }
+
+            try
+            {
+                var fullParent = Path.GetFullPath(parent)
+                    .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                var candidate = Path.GetFullPath(Path.Combine(fullParent, childName));
+                if (!candidate.StartsWith(
+                        fullParent + Path.DirectorySeparatorChar,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    return false;
+                }
+
+                path = candidate;
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         /// <summary>
@@ -1632,6 +1777,8 @@ namespace ControlTower.Desktop.ViewModels
             ArchiveSyncActive = true;
             var succeeded = 0;
             var failed = 0;
+            var noCurrentRelease = 0;
+            var upstreamUnavailable = 0;
             var failures = new List<ArchiveSyncFailureDetail>();
 
             try
@@ -1654,13 +1801,60 @@ namespace ControlTower.Desktop.ViewModels
                         workingSourceInventory);
 
                     string failureReason = null;
+                    // True only for the "succeeded but incomplete release"
+                    // branch below, where the reloaded state is this very
+                    // attempt's fresh result — never for a Failed result or a
+                    // thrown exception, where the engine may not have
+                    // persisted anything for this attempt at all.
+                    var failureReasonConfirmedCurrent = false;
 
                     try
                     {
                         var result = await ArchiveSyncService.SyncAsync(request, progress, CancellationToken.None);
-                        if (result.Status == ArchiveSyncStatus.Succeeded || result.Status == ArchiveSyncStatus.UpstreamUnavailable)
+                        if (result.Status == ArchiveSyncStatus.UpstreamUnavailable)
                         {
-                            succeeded++;
+                            upstreamUnavailable++;
+                            failed++;
+                            failureReason = string.IsNullOrWhiteSpace(result.Message)
+                                ? "The upstream remote is unavailable."
+                                : result.Message;
+                            failures.Add(new ArchiveSyncFailureDetail(
+                                project.Id,
+                                project.DisplayName ?? project.Id,
+                                failureReason));
+                            AppLogger.Warn(
+                                "Archive",
+                                "Upstream unavailable for '" + (project.DisplayName ?? project.Id) +
+                                "' (" + project.Id + "): " + failureReason);
+                        }
+                        else if (result.Status == ArchiveSyncStatus.Succeeded)
+                        {
+                            var state = ArchiveStateStore?.Load(project.Id);
+                            if (IsCurrentArchiveRoot(project, state) &&
+                                state.ReleaseStatus == ArchiveReleaseStatus.Captured &&
+                                HasCompleteReleaseCapture(state))
+                            {
+                                succeeded++;
+                            }
+                            else if (IsCurrentArchiveRoot(project, state) &&
+                                     state.ReleaseStatus == ArchiveReleaseStatus.NoCurrentRelease)
+                            {
+                                noCurrentRelease++;
+                            }
+                            else
+                            {
+                                failed++;
+                                failureReason = "Archive source synced, but the current release is not completely archived.";
+                                failureReasonConfirmedCurrent = true;
+                                failures.Add(new ArchiveSyncFailureDetail(
+                                    project.Id,
+                                    project.DisplayName ?? project.Id,
+                                    failureReason));
+                                AppLogger.Warn(
+                                    "Archive",
+                                    "Sync completed without a complete release archive for '" +
+                                    (project.DisplayName ?? project.Id) + "' (" + project.Id + ").");
+                            }
                         }
                         else
                         {
@@ -1695,7 +1889,7 @@ namespace ControlTower.Desktop.ViewModels
                         // store-derived "Needs sync".
                         if (failureReason != null)
                         {
-                            ApplyFailedSyncResult(project, failureReason);
+                            ApplyFailedSyncResult(project, failureReason, failureReasonConfirmedCurrent);
                         }
                         else
                         {
@@ -1707,12 +1901,58 @@ namespace ControlTower.Desktop.ViewModels
             finally
             {
                 ArchiveSyncProgressPercent = 100;
-                ArchiveSyncStatusText = failed == 0
-                    ? $"Archive sync complete \u2014 {succeeded} repo(s) up to date"
-                    : $"Archive sync complete \u2014 {succeeded} ok, {failed} failed: {string.Join("; ", failures.Select(f => f.Reason))}";
+                ArchiveSyncStatusText = DescribeArchiveSyncCompletion(
+                    succeeded,
+                    noCurrentRelease,
+                    upstreamUnavailable,
+                    failed,
+                    failures);
                 ArchiveSyncActive = false;
-                SetArchiveSyncOutcome(ArchiveSyncOutcome.Completed(succeeded, failed, failures, ArchiveSyncStatusText));
+                SetArchiveSyncOutcome(ArchiveSyncOutcome.Completed(
+                    succeeded + noCurrentRelease,
+                    failed,
+                    failures,
+                    ArchiveSyncStatusText));
             }
+        }
+
+        private static string DescribeArchiveSyncCompletion(
+            int releasesArchived,
+            int noCurrentRelease,
+            int upstreamUnavailable,
+            int failed,
+            IReadOnlyList<ArchiveSyncFailureDetail> failures)
+        {
+            var parts = new List<string>();
+            if (releasesArchived > 0)
+            {
+                parts.Add(releasesArchived + " source+release archived");
+            }
+
+            if (noCurrentRelease > 0)
+            {
+                parts.Add(noCurrentRelease + " source archived (no current release)");
+            }
+
+            if (upstreamUnavailable > 0)
+            {
+                parts.Add(upstreamUnavailable + " upstream unavailable");
+            }
+
+            if (failed > 0)
+            {
+                parts.Add(failed + " failed");
+            }
+
+            if (parts.Count == 0)
+            {
+                parts.Add("no complete archive");
+            }
+
+            var message = "Archive sync complete \u2014 " + string.Join(", ", parts);
+            return failed == 0
+                ? message
+                : message + ": " + string.Join("; ", failures.Select(f => f.Reason));
         }
 
         private void SetArchiveSyncOutcome(ArchiveSyncOutcome outcome)
@@ -1822,8 +2062,39 @@ namespace ControlTower.Desktop.ViewModels
         /// ephemeral, display-only marking <see cref="MarkArchiveTargetsBlocked"/>
         /// uses for a whole-batch refusal.
         /// </summary>
-        private void ApplyFailedSyncResult(ProjectOverview project, string reason)
+        /// <param name="reasonConfirmedCurrent">
+        /// True only when the caller already knows the reloaded state is
+        /// this very attempt's fresh result (a completed sync whose release
+        /// capture came up short) — in that case a release-incomplete/
+        /// unsupported state is trusted as-is. Otherwise (an explicit Failed
+        /// result or a thrown exception) the engine may not have persisted
+        /// anything for this attempt, so a release-incomplete/unsupported
+        /// state left over from an earlier attempt is trusted only when its
+        /// persisted reason actually is <paramref name="reason"/> — never
+        /// displayed in place of a current, different failure such as a
+        /// source-sync error the store had no chance to save.
+        /// </param>
+        private void ApplyFailedSyncResult(ProjectOverview project, string reason, bool reasonConfirmedCurrent)
         {
+            if (ArchiveStateStore != null)
+            {
+                var state = ArchiveStateStore.Load(project.Id);
+                if (IsCurrentArchiveRoot(project, state) &&
+                    (state.UpstreamStatus == ArchiveUpstreamStatus.Unavailable ||
+                     ((state.ReleaseStatus == ArchiveReleaseStatus.Incomplete ||
+                       state.ReleaseStatus == ArchiveReleaseStatus.Unsupported) &&
+                      (reasonConfirmedCurrent ||
+                       string.Equals(state.LastError, reason, StringComparison.Ordinal) ||
+                       string.Equals(state.LastReleaseError, reason, StringComparison.Ordinal)))))
+                {
+                    project.ArchiveStatus = DescribeArchiveStatus(state);
+                    project.ArchiveStatusDetail = DescribeArchiveStatusDetail(project, state);
+                    RefreshProjectRowDisplay(project);
+                    RebuildTally();
+                    return;
+                }
+            }
+
             project.ArchiveStatus = "Error";
             project.ArchiveStatusDetail = reason;
             RefreshProjectRowDisplay(project);

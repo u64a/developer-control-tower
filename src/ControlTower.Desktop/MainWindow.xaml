@@ -188,7 +188,7 @@
                             <ColumnDefinition Width="1.1*" />
                             <ColumnDefinition Width="104" />
                             <ColumnDefinition Width="92" />
-                            <ColumnDefinition Width="108" />
+                            <ColumnDefinition Width="148" />
                         </Grid.ColumnDefinitions>
                         <CheckBox Grid.Column="0"
                                   VerticalAlignment="Center"
@@ -337,7 +337,7 @@
                                         <ColumnDefinition Width="1.1*" />
                                         <ColumnDefinition Width="104" />
                                         <ColumnDefinition Width="92" />
-                                        <ColumnDefinition Width="108" />
+                                        <ColumnDefinition Width="148" />
                                     </Grid.ColumnDefinitions>
                                     <CheckBox Grid.Column="0"
                                               VerticalAlignment="Center"

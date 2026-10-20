@@ -8,8 +8,8 @@ namespace ControlTower.Core.Contracts
 {
     /// <summary>
     /// Maintains the local safety-net copy for every project in the
-    /// <see cref="ArchiveGroup"/>. Read-only against GitHub: this service
-    /// only ever clones/fetches, it never pushes or deletes anything
+    /// <see cref="ArchiveGroup"/>. Read-only against hosted remotes: this
+    /// service only ever clones/fetches, it never pushes or deletes anything
     /// remotely, and it never deletes the local copy — a vanished upstream
     /// is reported, not acted on.
     /// </summary>
@@ -48,13 +48,18 @@ namespace ControlTower.Core.Contracts
     }
 
     /// <summary>
-    /// Read-only GitHub Releases API access used to capture the latest
+    /// Read-only hosted-release API access used to capture the current/latest
     /// release's metadata/assets and verify their integrity before they
     /// replace a previous local copy.
     /// </summary>
     public interface IArchiveReleaseClient
     {
-        /// <summary>Returns null when the repo has no releases, or the remote is unreachable.</summary>
+        /// <summary>
+        /// Returns null only when the provider has confirmed the repository
+        /// has no current/latest release. Lookup failures and unsupported
+        /// remotes must throw so the archive can remain incomplete rather
+        /// than reporting a no-release result.
+        /// </summary>
         Task<ArchiveReleaseInfo?> GetLatestReleaseAsync(
             string remoteUrl,
             CancellationToken ct);
@@ -71,10 +76,10 @@ namespace ControlTower.Core.Contracts
 
         /// <summary>
         /// Resolves the root (non-fork) upstream repo for
-        /// <paramref name="remoteUrl"/> via the GitHub API's "source" field.
-        /// Returns null when the remote isn't a fork, or the lookup fails —
-        /// callers then fall back to treating the remote as its own source
-        /// of truth.
+        /// <paramref name="remoteUrl"/> when the release provider exposes that
+        /// relationship. Returns null when the remote isn't a supported fork, or
+        /// the lookup fails — callers then fall back to treating the remote as
+        /// its own source of truth.
         /// </summary>
         Task<ArchiveUpstreamRepo?> ResolveUpstreamAsync(
             string remoteUrl,

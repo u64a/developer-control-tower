@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Net;
+using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 using ControlTower.Core.Contracts;
@@ -95,15 +97,23 @@ public class ArchiveSyncServiceTests
                 UpstreamStatus = source.UpstreamStatus,
                 LastError = source.LastError,
                 AutoSyncEnabled = source.AutoSyncEnabled,
+                ReleaseStatus = source.ReleaseStatus,
                 LastReleaseTag = source.LastReleaseTag,
                 LastReleaseIntegrity = source.LastReleaseIntegrity,
                 LastReleaseCapturedUtc = source.LastReleaseCapturedUtc,
+                LastReleaseDirectoryName = source.LastReleaseDirectoryName,
+                LastReleaseError = source.LastReleaseError,
                 UpstreamFullName = source.UpstreamFullName
             };
 
             foreach (var path in source.PreviousArchivePaths)
             {
                 clone.PreviousArchivePaths.Add(path);
+            }
+
+            foreach (var name in source.LastReleaseAssetNames)
+            {
+                clone.LastReleaseAssetNames.Add(name);
             }
 
             return clone;
@@ -1367,6 +1377,549 @@ public class ArchiveSyncServiceTests
             TryDeleteDirectory(rootBase);
         }
     }
+
+    [Fact]
+    public async Task SyncAsync_ForgejoLatestRelease_DownloadsEveryPlatformAndBuildOutsideWorkingSource()
+    {
+        var rootBase = Path.Combine(
+            Path.GetTempPath(),
+            "archive-forgejo-release-" + Guid.NewGuid().ToString("N"));
+        var archiveRoot = Path.Combine(rootBase, "archive-root");
+        var sourceRoot = Path.Combine(rootBase, "working-source");
+        var sourceSentinel = Path.Combine(sourceRoot, "source-sentinel.txt");
+        const string projectId = "forgejo-release-project";
+        var archivePath = Path.Combine(archiveRoot, projectId);
+        Directory.CreateDirectory(sourceRoot);
+        File.WriteAllText(sourceSentinel, "do-not-touch");
+
+        try
+        {
+            var git = new FakeGitProcessAdapter
+            {
+                Handler = (args, _) =>
+                {
+                    if (args.Length > 0 && args[0] == "ls-remote")
+                    {
+                        return Ok("abc\trefs/heads/master\n");
+                    }
+
+                    if (args.Length >= 2 && args[0] == "rev-parse" && args[1] == "HEAD")
+                    {
+                        return Ok("abc123\n");
+                    }
+
+                    throw new InvalidOperationException("Unexpected git command: " + string.Join(" ", args));
+                }
+            };
+            var clone = new FakeCloneService
+            {
+                NextResult = CloneResult.Ok("master", "abc123", "cloned"),
+                OnClone = request => Directory.CreateDirectory(Path.Combine(request.DestinationPath, ".git"))
+            };
+            var state = new FakeStateStore();
+            using var handler = new ReleaseHttpHandler(ForgejoReleaseFixture.Respond);
+            using var releases = new GitHubReleaseClient(handler, "test-github-token");
+            var service = new ArchiveSyncService(git, clone, state, releases);
+
+            var result = await service.SyncAsync(
+                new ArchiveSyncRequest(
+                    projectId,
+                    "https://forge.example.test/eden-emu/eden.git",
+                    archiveRoot,
+                    ArchiveWorkingSourceInventory.Complete(new[]
+                    {
+                        new ArchiveWorkingSource("forgejo-working-source", sourceRoot)
+                    })),
+                progress: null,
+                CancellationToken.None);
+
+            Assert.Equal(ArchiveSyncStatus.Succeeded, result.Status);
+            Assert.Equal(archivePath, Assert.Single(clone.Requests).DestinationPath);
+            var releasePath = Path.Combine(archivePath, "releases", "v0.2.1");
+            Assert.Equal(
+                ForgejoReleaseFixture.AssetNames.OrderBy(name => name, StringComparer.Ordinal),
+                Directory.GetFiles(releasePath).Select(Path.GetFileName).OrderBy(name => name, StringComparer.Ordinal));
+            foreach (var name in ForgejoReleaseFixture.AssetNames)
+            {
+                Assert.Equal(
+                    ForgejoReleaseFixture.Contents(name),
+                    await File.ReadAllBytesAsync(Path.Combine(releasePath, name)));
+            }
+
+            Assert.Equal(1 + ForgejoReleaseFixture.AssetNames.Length, handler.Requests.Count);
+            Assert.All(handler.Requests, request => Assert.Null(request.Authorization));
+            Assert.Equal("v0.2.1", state.LastSaved!.LastReleaseTag);
+            Assert.Equal(ArchiveReleaseStatus.Captured, state.LastSaved.ReleaseStatus);
+            Assert.Equal(ArchiveReleaseIntegrity.Unverifiable, state.LastSaved.LastReleaseIntegrity);
+            Assert.Equal(ForgejoReleaseFixture.AssetNames, state.LastSaved.LastReleaseAssetNames);
+            Assert.Equal("do-not-touch", File.ReadAllText(sourceSentinel));
+            Assert.Equal(new[] { sourceSentinel }, Directory.GetFiles(sourceRoot, "*", SearchOption.AllDirectories));
+        }
+        finally
+        {
+            TryDeleteDirectory(rootBase);
+        }
+    }
+
+    [Fact]
+    public async Task SyncAsync_ForgejoRefresh_ReplacesSameTagWithoutPromotingStaleStagingFiles()
+    {
+        var rootBase = Path.Combine(Path.GetTempPath(), "archive-forgejo-refresh-" + Guid.NewGuid().ToString("N"));
+        var archiveRoot = Path.Combine(rootBase, "archive-root");
+        var sourceRoot = Path.Combine(rootBase, "working-source");
+        const string projectId = "forgejo-refresh-project";
+        var releaseRoot = Path.Combine(archiveRoot, projectId, "releases");
+        var finalPath = Path.Combine(releaseRoot, "v0.2.1");
+        var staleIncoming = Path.Combine(releaseRoot, ".incoming-v0.2.1");
+        Directory.CreateDirectory(sourceRoot);
+
+        try
+        {
+            using var handler = new ReleaseHttpHandler(ForgejoReleaseFixture.Respond);
+            using var releases = new GitHubReleaseClient(handler, gitHubToken: null);
+            var state = new FakeStateStore();
+            var service = CreateForgejoCaptureService(releases, state, _ =>
+            {
+                Directory.CreateDirectory(finalPath);
+                File.WriteAllText(Path.Combine(finalPath, "previous.zip"), "previous complete capture");
+                Directory.CreateDirectory(staleIncoming);
+                File.WriteAllText(Path.Combine(staleIncoming, "stale.zip"), "interrupted earlier attempt");
+            });
+
+            var result = await service.SyncAsync(
+                CreateForgejoCaptureRequest(projectId, archiveRoot, sourceRoot),
+                progress: null,
+                CancellationToken.None);
+
+            Assert.Equal(ArchiveSyncStatus.Succeeded, result.Status);
+            Assert.Equal(
+                ForgejoReleaseFixture.AssetNames.OrderBy(name => name, StringComparer.Ordinal),
+                Directory.GetFiles(finalPath).Select(Path.GetFileName).OrderBy(name => name, StringComparer.Ordinal));
+            Assert.All(
+                Directory.GetDirectories(releaseRoot, ".incoming-*"),
+                path => Assert.Equal(staleIncoming, path));
+        }
+        finally
+        {
+            TryDeleteDirectory(rootBase);
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SyncAsync_ForgejoInterruptedRefresh_PreservesPreviousReleaseAndCleansStaging(bool cancel)
+    {
+        var rootBase = Path.Combine(Path.GetTempPath(), "archive-forgejo-interrupted-" + Guid.NewGuid().ToString("N"));
+        var archiveRoot = Path.Combine(rootBase, "archive-root");
+        var sourceRoot = Path.Combine(rootBase, "working-source");
+        const string projectId = "forgejo-interrupted-project";
+        var releaseRoot = Path.Combine(archiveRoot, projectId, "releases");
+        var finalPath = Path.Combine(releaseRoot, "v0.2.1");
+        var previousAsset = Path.Combine(finalPath, "previous.zip");
+        var previousCapture = new DateTime(2026, 6, 2, 0, 0, 0, DateTimeKind.Utc);
+        Directory.CreateDirectory(sourceRoot);
+        using var cancellation = new CancellationTokenSource();
+
+        try
+        {
+            using var handler = new ReleaseHttpHandler((request, token) =>
+            {
+                if (request.RequestUri!.AbsoluteUri == ForgejoReleaseFixture.DownloadUrl(ForgejoReleaseFixture.AssetNames[4]))
+                {
+                    if (cancel)
+                    {
+                        cancellation.Cancel();
+                        return Task.FromCanceled<HttpResponseMessage>(token);
+                    }
+
+                    return Task.FromResult(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable));
+                }
+
+                return ForgejoReleaseFixture.Respond(request, token);
+            });
+            using var releases = new GitHubReleaseClient(handler, gitHubToken: null);
+            var state = new FakeStateStore();
+            state.States[projectId] = new ArchiveRepoState
+            {
+                ProjectId = projectId,
+                LastReleaseTag = "v0.2.1",
+                LastReleaseIntegrity = ArchiveReleaseIntegrity.Unverifiable,
+                LastReleaseCapturedUtc = previousCapture
+            };
+            var service = CreateForgejoCaptureService(releases, state, _ =>
+            {
+                Directory.CreateDirectory(finalPath);
+                File.WriteAllText(previousAsset, "previous complete capture");
+            });
+            var request = CreateForgejoCaptureRequest(projectId, archiveRoot, sourceRoot);
+
+            if (cancel)
+            {
+                await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+                    service.SyncAsync(request, progress: null, cancellation.Token));
+            }
+            else
+            {
+                var result = await service.SyncAsync(request, progress: null, CancellationToken.None);
+                Assert.Equal(ArchiveSyncStatus.Failed, result.Status);
+                Assert.Contains("503", result.Message);
+            }
+
+            Assert.Equal(new[] { previousAsset }, Directory.GetFiles(finalPath));
+            Assert.Equal("previous complete capture", File.ReadAllText(previousAsset));
+            Assert.Empty(Directory.GetDirectories(releaseRoot, ".incoming-*"));
+            if (cancel)
+            {
+                Assert.Equal(previousCapture, state.States[projectId].LastReleaseCapturedUtc);
+            }
+            else
+            {
+                Assert.Equal(ArchiveReleaseStatus.Incomplete, state.LastSaved!.ReleaseStatus);
+                Assert.Contains("503", state.LastSaved.LastReleaseError);
+                Assert.Null(state.LastSaved.LastReleaseCapturedUtc);
+            }
+            Assert.True(handler.Requests.Count > 2, "The failure must occur after some assets were downloaded.");
+        }
+        finally
+        {
+            TryDeleteDirectory(rootBase);
+        }
+    }
+
+    [Fact]
+    public async Task SyncAsync_ForgejoMalformedAsset_FailsWithoutPromotingPartialRelease()
+    {
+        var rootBase = Path.Combine(Path.GetTempPath(), "archive-forgejo-malformed-" + Guid.NewGuid().ToString("N"));
+        var archiveRoot = Path.Combine(rootBase, "archive-root");
+        var sourceRoot = Path.Combine(rootBase, "working-source");
+        const string projectId = "forgejo-malformed-project";
+        Directory.CreateDirectory(sourceRoot);
+
+        try
+        {
+            using var handler = new ReleaseHttpHandler((_, _) => Task.FromResult(
+                new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("""
+                        {"tag_name":"v0.2.1","assets":[{"name":"app.apk"}]}
+                        """)
+                }));
+            using var releases = new GitHubReleaseClient(handler, gitHubToken: null);
+            var state = new FakeStateStore();
+            var service = CreateForgejoCaptureService(releases, state);
+
+            var result = await service.SyncAsync(
+                CreateForgejoCaptureRequest(projectId, archiveRoot, sourceRoot),
+                progress: null,
+                CancellationToken.None);
+
+            Assert.Equal(ArchiveSyncStatus.Failed, result.Status);
+            Assert.False(string.IsNullOrWhiteSpace(result.Message));
+            Assert.Null(state.LastSaved!.LastReleaseCapturedUtc);
+            Assert.False(Directory.Exists(Path.Combine(archiveRoot, projectId, "releases", "v0.2.1")));
+            Assert.Single(handler.Requests);
+        }
+        finally
+        {
+            TryDeleteDirectory(rootBase);
+        }
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task SyncAsync_SameVerifiedTagWithAddedOrMissingAssets_RecapturesFullCurrentRelease(bool addedAssets)
+    {
+        var rootBase = Path.Combine(Path.GetTempPath(), "archive-forgejo-recapture-" + Guid.NewGuid().ToString("N"));
+        var archiveRoot = Path.Combine(rootBase, "archive-root");
+        var sourceRoot = Path.Combine(rootBase, "working-source");
+        const string projectId = "forgejo-recapture-project";
+        var finalPath = Path.Combine(archiveRoot, projectId, "releases", "v0.2.1");
+        Directory.CreateDirectory(sourceRoot);
+
+        try
+        {
+            using var handler = new ReleaseHttpHandler(ForgejoReleaseFixture.Respond);
+            using var releases = new GitHubReleaseClient(handler, gitHubToken: null);
+            var state = new FakeStateStore();
+            var previous = new ArchiveRepoState
+            {
+                ProjectId = projectId,
+                ReleaseStatus = ArchiveReleaseStatus.Captured,
+                LastReleaseTag = "v0.2.1",
+                LastReleaseDirectoryName = "v0.2.1",
+                LastReleaseIntegrity = ArchiveReleaseIntegrity.Verified,
+                LastReleaseCapturedUtc = DateTime.UtcNow
+            };
+            var capturedNames = addedAssets ? new[] { ForgejoReleaseFixture.AssetNames[0] } : ForgejoReleaseFixture.AssetNames;
+            foreach (var name in capturedNames)
+            {
+                previous.LastReleaseAssetNames.Add(name);
+            }
+
+            state.States[projectId] = previous;
+            var service = CreateForgejoCaptureService(releases, state, _ =>
+            {
+                Directory.CreateDirectory(finalPath);
+                foreach (var name in capturedNames)
+                {
+                    if (addedAssets || name != ForgejoReleaseFixture.AssetNames[0])
+                    {
+                        File.WriteAllBytes(Path.Combine(finalPath, name), ForgejoReleaseFixture.Contents(name));
+                    }
+                }
+            });
+
+            var result = await service.SyncAsync(
+                CreateForgejoCaptureRequest(projectId, archiveRoot, sourceRoot),
+                progress: null,
+                CancellationToken.None);
+
+            Assert.Equal(ArchiveSyncStatus.Succeeded, result.Status);
+            Assert.Equal(1 + ForgejoReleaseFixture.AssetNames.Length, handler.Requests.Count);
+            Assert.Equal(
+                ForgejoReleaseFixture.AssetNames.OrderBy(name => name, StringComparer.Ordinal),
+                Directory.GetFiles(finalPath).Select(Path.GetFileName).OrderBy(name => name, StringComparer.Ordinal));
+            Assert.Equal(ArchiveReleaseStatus.Captured, state.LastSaved!.ReleaseStatus);
+            Assert.Equal(ForgejoReleaseFixture.AssetNames, state.LastSaved.LastReleaseAssetNames);
+        }
+        finally
+        {
+            TryDeleteDirectory(rootBase);
+        }
+    }
+
+    [Fact]
+    public async Task SyncAsync_ReleaseHashMismatch_IsIncompleteNotSuccessfullySynced()
+    {
+        var rootBase = Path.Combine(Path.GetTempPath(), "archive-release-mismatch-" + Guid.NewGuid().ToString("N"));
+        var archiveRoot = Path.Combine(rootBase, "archive-root");
+        var sourceRoot = Path.Combine(rootBase, "working-source");
+        const string projectId = "release-mismatch-project";
+        Directory.CreateDirectory(sourceRoot);
+        try
+        {
+            var releases = new FakeArchiveReleaseClient
+            {
+                LatestReleaseResult = new ArchiveReleaseInfo(
+                    "v1", "v1", "notes", DateTime.UtcNow,
+                    new[] { new ArchiveReleaseAsset("app.zip", "https://downloads.example.test/app.zip", 1, "abcd") }),
+                DownloadResult = ArchiveReleaseIntegrity.Mismatch
+            };
+            var state = new FakeStateStore();
+            var service = CreateForgejoCaptureService(releases, state);
+
+            var result = await service.SyncAsync(
+                CreateForgejoCaptureRequest(projectId, archiveRoot, sourceRoot),
+                progress: null,
+                CancellationToken.None);
+
+            Assert.Equal(ArchiveSyncStatus.Failed, result.Status);
+            Assert.Contains("mismatch", result.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(ArchiveReleaseStatus.Incomplete, state.LastSaved!.ReleaseStatus);
+            Assert.Equal(ArchiveReleaseIntegrity.Mismatch, state.LastSaved.LastReleaseIntegrity);
+            Assert.False(Directory.Exists(Path.Combine(archiveRoot, projectId, "releases", "v1")));
+        }
+        finally
+        {
+            TryDeleteDirectory(rootBase);
+        }
+    }
+
+    [Fact]
+    public async Task SyncAsync_ConfirmedNoRelease_ReportsSourceOnlyArchive()
+    {
+        var rootBase = Path.Combine(Path.GetTempPath(), "archive-no-release-" + Guid.NewGuid().ToString("N"));
+        var archiveRoot = Path.Combine(rootBase, "archive-root");
+        var sourceRoot = Path.Combine(rootBase, "working-source");
+        const string projectId = "no-release-project";
+        Directory.CreateDirectory(sourceRoot);
+        try
+        {
+            var state = new FakeStateStore();
+            var service = CreateForgejoCaptureService(new FakeArchiveReleaseClient(), state);
+
+            var result = await service.SyncAsync(
+                CreateForgejoCaptureRequest(projectId, archiveRoot, sourceRoot),
+                progress: null,
+                CancellationToken.None);
+
+            Assert.Equal(ArchiveSyncStatus.Succeeded, result.Status);
+            Assert.Contains("no current release", result.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(ArchiveReleaseStatus.NoCurrentRelease, state.LastSaved!.ReleaseStatus);
+            Assert.True(Directory.Exists(Path.Combine(archiveRoot, projectId, ".git")));
+            Assert.Null(state.LastSaved.LastReleaseCapturedUtc);
+        }
+        finally
+        {
+            TryDeleteDirectory(rootBase);
+        }
+    }
+
+    [Fact]
+    public void PromoteIncomingRelease_FailedReplacement_RestoresPreviousCapture()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "archive-release-rollback-" + Guid.NewGuid().ToString("N"));
+        var incoming = Path.Combine(root, ".incoming-v1");
+        var final = Path.Combine(root, "v1");
+        Directory.CreateDirectory(incoming);
+        Directory.CreateDirectory(final);
+        File.WriteAllText(Path.Combine(incoming, "new.zip"), "new capture");
+        File.WriteAllText(Path.Combine(final, "previous.zip"), "previous complete capture");
+        var moves = new List<(string Source, string Destination)>();
+        try
+        {
+            Assert.Throws<IOException>(() => ArchiveSyncService.PromoteIncomingRelease(
+                incoming,
+                final,
+                root,
+                (source, destination) =>
+                {
+                    moves.Add((source, destination));
+                    if (source == incoming)
+                    {
+                        throw new IOException("Injected incoming promotion failure.");
+                    }
+
+                    Directory.Move(source, destination);
+                }));
+
+            Assert.Equal(3, moves.Count);
+            Assert.Equal(final, moves[0].Source);
+            Assert.Equal((incoming, final), moves[1]);
+            Assert.Equal(final, moves[2].Destination);
+            Assert.Equal("previous complete capture", File.ReadAllText(Path.Combine(final, "previous.zip")));
+            Assert.Equal("new capture", File.ReadAllText(Path.Combine(incoming, "new.zip")));
+            Assert.Empty(Directory.GetDirectories(root, ".backup-*"));
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
+    [Fact]
+    public void PromoteIncomingRelease_FailedRestoration_RetainsBackupAndReportsRecoveryPath()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "archive-release-recovery-" + Guid.NewGuid().ToString("N"));
+        var incoming = Path.Combine(root, ".incoming-v1");
+        var final = Path.Combine(root, "v1");
+        Directory.CreateDirectory(incoming);
+        Directory.CreateDirectory(final);
+        File.WriteAllText(Path.Combine(final, "previous.zip"), "previous complete capture");
+        try
+        {
+            var error = Assert.Throws<IOException>(() => ArchiveSyncService.PromoteIncomingRelease(
+                incoming,
+                final,
+                root,
+                (source, destination) =>
+                {
+                    if (destination == final)
+                    {
+                        throw new IOException("Injected final-directory move failure.");
+                    }
+
+                    Directory.Move(source, destination);
+                }));
+
+            var backup = Assert.Single(Directory.GetDirectories(root, ".backup-*"));
+            Assert.Contains(backup, error.Message);
+            Assert.Equal("previous complete capture", File.ReadAllText(Path.Combine(backup, "previous.zip")));
+            Assert.IsType<AggregateException>(error.InnerException);
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
+    [Fact]
+    public async Task SyncAsync_CaseCollidingAssetNames_FailsInsteadOfSilentlyOverwritingVariant()
+    {
+        var rootBase = Path.Combine(Path.GetTempPath(), "archive-release-collision-" + Guid.NewGuid().ToString("N"));
+        var archiveRoot = Path.Combine(rootBase, "archive-root");
+        var sourceRoot = Path.Combine(rootBase, "working-source");
+        const string projectId = "release-collision-project";
+        Directory.CreateDirectory(sourceRoot);
+        try
+        {
+            var releases = new FakeArchiveReleaseClient
+            {
+                LatestReleaseResult = new ArchiveReleaseInfo(
+                    "v1", "v1", "notes", DateTime.UtcNow,
+                    new[]
+                    {
+                        new ArchiveReleaseAsset("App.zip", "https://downloads.example.test/App.zip", 1, null),
+                        new ArchiveReleaseAsset("app.zip", "https://downloads.example.test/app.zip", 1, null)
+                    })
+            };
+            var state = new FakeStateStore();
+            var service = CreateForgejoCaptureService(releases, state);
+
+            var result = await service.SyncAsync(
+                CreateForgejoCaptureRequest(projectId, archiveRoot, sourceRoot),
+                progress: null,
+                CancellationToken.None);
+
+            Assert.Equal(ArchiveSyncStatus.Failed, result.Status);
+            Assert.Equal(ArchiveReleaseStatus.Incomplete, state.LastSaved!.ReleaseStatus);
+            Assert.Empty(releases.Downloads);
+            Assert.False(Directory.Exists(Path.Combine(archiveRoot, projectId, "releases", "v1")));
+        }
+        finally
+        {
+            TryDeleteDirectory(rootBase);
+        }
+    }
+
+    private static ArchiveSyncService CreateForgejoCaptureService(
+        IArchiveReleaseClient releases,
+        FakeStateStore state,
+        Action<string>? seedArchive = null)
+    {
+        var git = new FakeGitProcessAdapter
+        {
+            Handler = (args, _) =>
+            {
+                if (args.Length > 0 && args[0] == "ls-remote")
+                {
+                    return Ok("abc\trefs/heads/master\n");
+                }
+
+                if (args.Length >= 2 && args[0] == "rev-parse" && args[1] == "HEAD")
+                {
+                    return Ok("abc123\n");
+                }
+
+                throw new InvalidOperationException("Unexpected git command: " + string.Join(" ", args));
+            }
+        };
+        var clone = new FakeCloneService
+        {
+            NextResult = CloneResult.Ok("master", "abc123", "cloned"),
+            OnClone = request =>
+            {
+                Directory.CreateDirectory(Path.Combine(request.DestinationPath, ".git"));
+                seedArchive?.Invoke(request.DestinationPath);
+            }
+        };
+        return new ArchiveSyncService(git, clone, state, releases);
+    }
+
+    private static ArchiveSyncRequest CreateForgejoCaptureRequest(
+        string projectId,
+        string archiveRoot,
+        string sourceRoot) =>
+        new(
+            projectId,
+            "https://forge.example.test/eden-emu/eden.git",
+            archiveRoot,
+            ArchiveWorkingSourceInventory.Complete(new[]
+            {
+                new ArchiveWorkingSource("forgejo-working-source", sourceRoot)
+            }));
 
     private static void TryDeleteDirectory(string path)
     {

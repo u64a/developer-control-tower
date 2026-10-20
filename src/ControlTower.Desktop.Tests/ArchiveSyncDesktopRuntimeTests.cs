@@ -149,6 +149,8 @@ public sealed class ArchiveSyncDesktopRuntimeTests
 
         Directory.CreateDirectory(sourceRoot);
         Directory.CreateDirectory(safeArchiveRoot);
+        Directory.CreateDirectory(Path.Combine(safeArchiveRoot, "archive-main", ".git"));
+        Directory.CreateDirectory(Path.Combine(safeArchiveRoot, "archive-fork", ".git"));
 
         var sourceSentinel = Path.Combine(sourceRoot, "source-sentinel.txt");
         File.WriteAllText(sourceSentinel, "do-not-touch");
@@ -160,7 +162,9 @@ public sealed class ArchiveSyncDesktopRuntimeTests
             {
                 ProjectId = "archive-main",
                 ArchivePath = Path.Combine(Path.GetFullPath(safeArchiveRoot), "archive-main"),
-                UpstreamStatus = ArchiveUpstreamStatus.Reachable
+                UpstreamStatus = ArchiveUpstreamStatus.Reachable,
+                ReleaseStatus = ArchiveReleaseStatus.NoCurrentRelease,
+                LastSyncedUtc = DateTime.UtcNow
             };
             stateStore.States["archive-fork"] = new ArchiveRepoState
             {
@@ -231,22 +235,22 @@ public sealed class ArchiveSyncDesktopRuntimeTests
 
             var mainRow = viewModel.Projects.Single(row => row.Id == "archive-main");
             var forkRow = viewModel.Projects.Single(row => row.Id == "archive-fork");
-            Assert.Equal("Synced", mainRow.Project.ArchiveStatus);
-            Assert.Equal("Upstream gone", forkRow.Project.ArchiveStatus);
+            Assert.Contains("release", mainRow.Project.ArchiveStatus, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal("Upstream unavailable", forkRow.Project.ArchiveStatus);
             Assert.DoesNotContain("Archive sync blocked:", viewModel.ArchiveSyncStatusText, StringComparison.OrdinalIgnoreCase);
-            Assert.Equal(string.Empty, mainRow.Project.ArchiveStatusDetail);
+            Assert.Contains("no current release", mainRow.Project.ArchiveStatusDetail, StringComparison.OrdinalIgnoreCase);
             Assert.Contains("upstream remote could not be reached", forkRow.Project.ArchiveStatusDetail, StringComparison.OrdinalIgnoreCase);
             Assert.Contains(rowSignals, signal => signal.RowId == "archive-main" && signal.PropertyName == "Project");
             Assert.Contains(rowSignals, signal => signal.RowId == "archive-fork" && signal.PropertyName == "Project");
             Assert.NotNull(viewModel.LastArchiveSyncOutcome);
             Assert.Equal(ArchiveSyncOutcomeKind.Completed, viewModel.LastArchiveSyncOutcome!.Kind);
-            Assert.Equal(2, viewModel.LastArchiveSyncOutcome.SucceededCount);
-            Assert.Equal(0, viewModel.LastArchiveSyncOutcome.FailedCount);
-            Assert.Empty(viewModel.LastArchiveSyncOutcome.Failures);
+            Assert.Equal(1, viewModel.LastArchiveSyncOutcome.SucceededCount);
+            Assert.Equal(1, viewModel.LastArchiveSyncOutcome.FailedCount);
+            Assert.Equal("archive-fork", Assert.Single(viewModel.LastArchiveSyncOutcome.Failures).ProjectId);
             Assert.Equal(2, outcomes.Count);
             Assert.Equal(ArchiveSyncOutcomeKind.Completed, outcomes[1].Kind);
-            Assert.Equal(2, outcomes[1].SucceededCount);
-            Assert.Equal(0, outcomes[1].FailedCount);
+            Assert.Equal(1, outcomes[1].SucceededCount);
+            Assert.Equal(1, outcomes[1].FailedCount);
             Assert.Null(viewModel.ArchiveSyncBlockedMessage);
 
             Assert.Equal("do-not-touch", File.ReadAllText(sourceSentinel));
@@ -611,6 +615,194 @@ public sealed class ArchiveSyncDesktopRuntimeTests
             Assert.Equal("Blocked", archiveStatusText.Text);
             Assert.Equal("Archive sync blocked: root conflicts with source.", archiveStatusDetailText.Text);
         });
+    }
+
+    [Theory]
+    [InlineData("source-missing")]
+    [InlineData("release-missing")]
+    [InlineData("asset-missing")]
+    [InlineData("captured")]
+    [InlineData("unverifiable")]
+    [InlineData("no-release")]
+    [InlineData("legacy-unknown")]
+    [InlineData("incomplete")]
+    [InlineData("source-failed")]
+    [InlineData("unsupported")]
+    public async Task LoadAsync_ArchiveStatus_DistinguishesSourceAndCurrentReleaseAvailability(string scenario)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "ct-archive-release-status-" + Guid.NewGuid().ToString("N"));
+        var archiveRoot = Path.Combine(root, "archive");
+        var sourceRoot = Path.Combine(root, "working-source");
+        const string projectId = "archive-main";
+        var archivePath = Path.Combine(archiveRoot, projectId);
+        var releasePath = Path.Combine(archivePath, "releases", "v0.2.1");
+        Directory.CreateDirectory(sourceRoot);
+        try
+        {
+            var state = new ArchiveRepoState
+            {
+                ProjectId = projectId,
+                ArchivePath = archivePath,
+                LastSyncedUtc = DateTime.UtcNow,
+                UpstreamStatus = ArchiveUpstreamStatus.Reachable,
+                ReleaseStatus = ArchiveReleaseStatus.Captured,
+                LastReleaseTag = "v0.2.1",
+                LastReleaseDirectoryName = "v0.2.1",
+                LastReleaseCapturedUtc = DateTime.UtcNow,
+                LastReleaseIntegrity = scenario == "unverifiable"
+                    ? ArchiveReleaseIntegrity.Unverifiable
+                    : ArchiveReleaseIntegrity.Verified
+            };
+            state.LastReleaseAssetNames.Add("Windows.zip");
+            state.LastReleaseAssetNames.Add("Android.apk");
+            if (scenario != "source-missing")
+            {
+                Directory.CreateDirectory(Path.Combine(archivePath, ".git"));
+            }
+
+            if (scenario != "release-missing")
+            {
+                Directory.CreateDirectory(releasePath);
+                File.WriteAllText(Path.Combine(releasePath, "Windows.zip"), "Windows fixture");
+                if (scenario != "asset-missing")
+                {
+                    File.WriteAllText(Path.Combine(releasePath, "Android.apk"), "Android fixture");
+                }
+            }
+
+            state.ReleaseStatus = scenario switch
+            {
+                "no-release" => ArchiveReleaseStatus.NoCurrentRelease,
+                "legacy-unknown" => ArchiveReleaseStatus.NotChecked,
+                "incomplete" => ArchiveReleaseStatus.Incomplete,
+                "source-failed" => ArchiveReleaseStatus.Incomplete,
+                "unsupported" => ArchiveReleaseStatus.Unsupported,
+                _ => ArchiveReleaseStatus.Captured
+            };
+            state.LastReleaseError = scenario is "incomplete" or "source-failed" ? "Release asset download failed: HTTP 503."
+                : scenario == "unsupported" ? "Unsupported release API." : string.Empty;
+            if (scenario == "source-failed")
+            {
+                state.LastError = "Git fetch failed: permission denied on the current attempt.";
+            }
+            var stateStore = new SpyArchiveStateStore();
+            stateStore.States[projectId] = state;
+            var viewModel = new MainViewModel(
+                CreateControlTowerServiceForReload(projectId, sourceRoot, "https://forge.example.test/org/repo.git"),
+                null, null, null)
+            {
+                ArchiveStateStore = stateStore,
+                ArchiveStorageRootPath = archiveRoot
+            };
+
+            await viewModel.LoadAsync();
+
+            var row = Assert.Single(viewModel.Projects, row => row.Id == projectId);
+            Assert.NotEqual("Synced", row.Project.ArchiveStatus);
+            switch (scenario)
+            {
+                case "source-missing":
+                    Assert.Contains("source clone is missing", row.Project.ArchiveStatusDetail, StringComparison.OrdinalIgnoreCase);
+                    break;
+                case "release-missing":
+                case "asset-missing":
+                    Assert.Contains("missing", row.Project.ArchiveStatus, StringComparison.OrdinalIgnoreCase);
+                    Assert.Contains("missing locally", row.Project.ArchiveStatusDetail, StringComparison.OrdinalIgnoreCase);
+                    break;
+                case "captured":
+                case "unverifiable":
+                    Assert.Contains("archived", row.Project.ArchiveStatus, StringComparison.OrdinalIgnoreCase);
+                    Assert.Contains("release captured", row.Project.ArchiveStatusDetail, StringComparison.OrdinalIgnoreCase);
+                    if (scenario == "unverifiable")
+                    {
+                        Assert.Contains("checksum", row.Project.ArchiveStatusDetail, StringComparison.OrdinalIgnoreCase);
+                    }
+                    break;
+                case "no-release":
+                    Assert.Contains("no current release", row.Project.ArchiveStatusDetail, StringComparison.OrdinalIgnoreCase);
+                    break;
+                case "legacy-unknown":
+                    Assert.Contains("not been checked", row.Project.ArchiveStatusDetail, StringComparison.OrdinalIgnoreCase);
+                    break;
+                case "incomplete":
+                    Assert.Contains("incomplete", row.Project.ArchiveStatus, StringComparison.OrdinalIgnoreCase);
+                    Assert.Contains("503", row.Project.ArchiveStatusDetail);
+                    break;
+                case "source-failed":
+                    Assert.Contains("Git fetch failed", row.Project.ArchiveStatusDetail, StringComparison.Ordinal);
+                    Assert.DoesNotContain("release incomplete", row.Project.ArchiveStatus, StringComparison.OrdinalIgnoreCase);
+                    break;
+                case "unsupported":
+                    Assert.Contains("unsupported", row.Project.ArchiveStatus, StringComparison.OrdinalIgnoreCase);
+                    Assert.Contains("Unsupported release API", row.Project.ArchiveStatusDetail);
+                    break;
+            }
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
+    [Theory]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    [InlineData(true, false)]
+    public async Task RunArchiveSyncAsync_FailureAfterEarlierReleaseProblem_ShowsCurrentStageAndReason(
+        bool sourceFailed,
+        bool errorPersisted)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "ct-archive-release-failure-" + Guid.NewGuid().ToString("N"));
+        var archiveRoot = Path.Combine(root, "archive");
+        var archivePath = Path.Combine(archiveRoot, "archive-main");
+        Directory.CreateDirectory(Path.Combine(archivePath, ".git"));
+        try
+        {
+            const string releaseReason = "Release asset download failed: HTTP 503.";
+            var reason = sourceFailed ? "Git fetch failed: permission denied on the current attempt." : releaseReason;
+            var stateStore = new SpyArchiveStateStore();
+            stateStore.States["archive-main"] = new ArchiveRepoState
+            {
+                ProjectId = "archive-main",
+                ArchivePath = archivePath,
+                LastSyncedUtc = DateTime.UtcNow,
+                UpstreamStatus = ArchiveUpstreamStatus.Reachable,
+                ReleaseStatus = ArchiveReleaseStatus.Incomplete,
+                LastError = errorPersisted ? reason : releaseReason,
+                LastReleaseError = releaseReason
+            };
+            var sync = new SpyArchiveSyncService
+            {
+                ResultFactory = request => new ArchiveSyncResult(request.ProjectId, ArchiveSyncStatus.Failed, reason, "sha")
+            };
+            var viewModel = CreateViewModel(
+                new[] { CreateArchiveProject("archive-main", "https://forge.example.test/org/repo.git", "Pending") },
+                sync,
+                new PassThroughSafetyService(),
+                stateStore,
+                archiveRoot,
+                ArchiveWorkingSourceInventory.Complete(Array.Empty<ArchiveWorkingSource>()));
+
+            await viewModel.RunArchiveSyncAsync();
+
+            var row = Assert.Single(viewModel.Projects);
+            Assert.Contains(reason, row.Project.ArchiveStatusDetail, StringComparison.Ordinal);
+            if (sourceFailed)
+            {
+                Assert.DoesNotContain("release incomplete", row.Project.ArchiveStatus, StringComparison.OrdinalIgnoreCase);
+            }
+            else
+            {
+                Assert.Contains("incomplete", row.Project.ArchiveStatus, StringComparison.OrdinalIgnoreCase);
+            }
+            Assert.Equal(0, viewModel.LastArchiveSyncOutcome!.SucceededCount);
+            Assert.Equal(1, viewModel.LastArchiveSyncOutcome.FailedCount);
+            Assert.DoesNotContain("up to date", viewModel.ArchiveSyncStatusText, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
     }
 
     private static MainViewModel CreateViewModel(

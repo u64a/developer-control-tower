@@ -209,6 +209,8 @@ namespace ControlTower.Desktop.Bootstrap
                     gitAdapter,
                     cloneService,
                     archiveStateStore,
+                    // This provider-aware client uses the GitHub credential
+                    // only for GitHub endpoints; public Forgejo remotes stay anonymous.
                     new GitHubReleaseClient(gitHubToken));
             }
             var missingScanner = new MissingProjectScanner(workspaceInspector);

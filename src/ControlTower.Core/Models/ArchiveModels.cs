@@ -46,14 +46,32 @@ namespace ControlTower.Core.Models
         Verified,
 
         /// <summary>
-        /// GitHub did not report a digest for the asset (pre-June-2025 upload)
-        /// so the previous release was kept rather than trusting an
-        /// unverified download.
+        /// The provider did not report a digest, but the downloaded asset was
+        /// captured locally without a provider checksum.
         /// </summary>
         Unverifiable,
 
         /// <summary>Downloaded bytes did not match the reported digest.</summary>
         Mismatch
+    }
+
+    /// <summary>Whether the current/latest release was checked and completely captured.</summary>
+    public enum ArchiveReleaseStatus
+    {
+        /// <summary>No explicit release check has completed (including legacy state).</summary>
+        NotChecked = 0,
+
+        /// <summary>The provider confirmed that the repository has no current release.</summary>
+        NoCurrentRelease,
+
+        /// <summary>The current release and every reported asset were captured locally.</summary>
+        Captured,
+
+        /// <summary>A release lookup, download, or integrity check did not complete.</summary>
+        Incomplete,
+
+        /// <summary>The remote cannot be checked through a supported release API.</summary>
+        Unsupported
     }
 
     /// <summary>
@@ -71,6 +89,9 @@ namespace ControlTower.Core.Models
             LastSyncedCommitSha = string.Empty;
             LastError = string.Empty;
             LastReleaseTag = string.Empty;
+            LastReleaseDirectoryName = string.Empty;
+            LastReleaseError = string.Empty;
+            LastReleaseAssetNames = new List<string>();
             AutoSyncEnabled = true;
         }
 
@@ -99,9 +120,21 @@ namespace ControlTower.Core.Models
 
         public string LastReleaseTag { get; set; }
 
+        /// <summary>Whether the latest release was checked and captured during a completed sync.</summary>
+        public ArchiveReleaseStatus ReleaseStatus { get; set; }
+
         public ArchiveReleaseIntegrity LastReleaseIntegrity { get; set; }
 
         public DateTime? LastReleaseCapturedUtc { get; set; }
+
+        /// <summary>Directory name below the archive's releases root for the current capture.</summary>
+        public string LastReleaseDirectoryName { get; set; }
+
+        /// <summary>Locally stored asset file names expected in the current release directory.</summary>
+        public IList<string> LastReleaseAssetNames { get; }
+
+        /// <summary>Actionable reason why the latest release is not completely captured.</summary>
+        public string LastReleaseError { get; set; }
 
         /// <summary>
         /// "owner/repo" of the root (non-fork) upstream this archive's local
@@ -113,24 +146,24 @@ namespace ControlTower.Core.Models
     }
 
     /// <summary>
-    /// The root (non-fork) GitHub repo a fork descends from, as reported by
-    /// the GitHub API's "source" field. Used so an archived fork's local
-    /// clone tracks the original project's default branch and releases
-    /// instead of the (never-pushed-to) fork remote.
+    /// The root (non-fork) hosted repo a fork descends from, when exposed by
+    /// its release provider. Used so an archived fork's local clone tracks
+    /// the original project's default branch and releases instead of the
+    /// (never-pushed-to) fork remote.
     /// </summary>
     public sealed record ArchiveUpstreamRepo(string Owner, string Repo, string CloneUrl, string DefaultBranch)
     {
         public string FullName => Owner + "/" + Repo;
     }
 
-    /// <summary>One release asset as reported by the GitHub Releases API.</summary>
+    /// <summary>One release asset as reported by a hosted-release API.</summary>
     public sealed record ArchiveReleaseAsset(
         string Name,
         string DownloadUrl,
         long SizeBytes,
         string? DigestSha256);
 
-    /// <summary>Latest-release metadata + assets for a repo, as captured from GitHub.</summary>
+    /// <summary>Current/latest release metadata + assets captured from a hosted-release API.</summary>
     public sealed record ArchiveReleaseInfo(
         string TagName,
         string Name,

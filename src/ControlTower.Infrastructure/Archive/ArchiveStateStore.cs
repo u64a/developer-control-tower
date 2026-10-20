@@ -103,6 +103,12 @@ namespace ControlTower.Infrastructure.Archive
                     case "LastReleaseTag":
                         state.LastReleaseTag = value;
                         break;
+                    case "ReleaseStatus":
+                        if (Enum.TryParse<ArchiveReleaseStatus>(value, out var releaseStatus))
+                        {
+                            state.ReleaseStatus = releaseStatus;
+                        }
+                        break;
                     case "LastReleaseIntegrity":
                         if (Enum.TryParse<ArchiveReleaseIntegrity>(value, out var integrity))
                         {
@@ -111,6 +117,18 @@ namespace ControlTower.Infrastructure.Archive
                         break;
                     case "LastReleaseCapturedUtc":
                         state.LastReleaseCapturedUtc = ParseDate(value);
+                        break;
+                    case "LastReleaseDirectoryName":
+                        state.LastReleaseDirectoryName = value;
+                        break;
+                    case "LastReleaseAssetNames":
+                        foreach (var assetName in value.Split('|', StringSplitOptions.RemoveEmptyEntries))
+                        {
+                            state.LastReleaseAssetNames.Add(assetName);
+                        }
+                        break;
+                    case "LastReleaseError":
+                        state.LastReleaseError = value;
                         break;
                     case "UpstreamFullName":
                         state.UpstreamFullName = value;
@@ -141,8 +159,12 @@ namespace ControlTower.Infrastructure.Archive
                 "LastError=" + (state.LastError ?? string.Empty),
                 "AutoSyncEnabled=" + (state.AutoSyncEnabled ? "true" : "false"),
                 "LastReleaseTag=" + (state.LastReleaseTag ?? string.Empty),
+                "ReleaseStatus=" + state.ReleaseStatus,
                 "LastReleaseIntegrity=" + state.LastReleaseIntegrity,
                 "LastReleaseCapturedUtc=" + FormatDate(state.LastReleaseCapturedUtc),
+                "LastReleaseDirectoryName=" + (state.LastReleaseDirectoryName ?? string.Empty),
+                "LastReleaseAssetNames=" + string.Join("|", state.LastReleaseAssetNames ?? Array.Empty<string>()),
+                "LastReleaseError=" + (state.LastReleaseError ?? string.Empty),
                 "UpstreamFullName=" + (state.UpstreamFullName ?? string.Empty)
             };
 

@@ -60,16 +60,36 @@ icon appears when a tool isn't installed.
 ## Archive safety net
 
 Projects in the **Archive** group can keep a full, local safety-net clone of
-their history and verified release assets. Configure its one shared storage
-root in **Settings → Archive safety net**, then explicitly choose **Sync all
-archives now** from an Archive project’s row menu whenever you want. The app
-also makes one guarded attempt automatically each time it starts, after your
-portfolio has finished loading — the same canonical inventory and whole-batch
-safety preflight as the manual action, never a timer or repeat. A refusal at
-startup never pops the blocking dialog (that stays reserved for the manual
-click); it only shows as "Blocked"/status row text you can act on. Leaving the
-setting blank uses `%USERPROFILE%\DeveloperControlTower\Archive`; it does not
-disable archiving or use the profile directory itself.
+their history and release assets. Configure its one shared storage root in
+**Settings → Archive safety net**, then explicitly choose **Sync all archives
+now** from an Archive project’s row menu whenever you want. The app also makes
+one guarded attempt automatically each time it starts, after your portfolio
+has finished loading — the same canonical inventory and whole-batch safety
+preflight as the manual action, never a timer or repeat. A refusal at startup
+never pops the blocking dialog (that stays reserved for the manual click); it
+only shows as "Blocked"/status row text you can act on. Leaving the setting
+blank uses `%USERPROFILE%\DeveloperControlTower\Archive`; it does not disable
+archiving or use the profile directory itself.
+
+For supported public HTTPS remotes, archive sync asks GitHub or a
+Forgejo-compatible host for its single current/latest release and captures
+every attached asset from that one release. This includes all platform and
+architecture variants (and supporting files); it does not download historical
+releases. GitHub SHA-256 digests are verified when supplied. Forgejo assets
+without a provider checksum are retained as explicitly **Unverifiable**, never
+represented as verified. A configured GitHub credential is sent only to
+GitHub's own HTTPS endpoints, never to Forgejo or external asset hosts,
+including after redirects.
+
+Archive rows distinguish the source clone from release capture: **Needs sync**
+means the current-root clone is absent; **Archived** means the clone and every
+current-release asset are present; **No current release** is a confirmed
+provider result; and **Release unsupported**, **Release incomplete**, or
+**Release missing** require attention. Legacy archive state is shown as
+**Release unchecked** until a sync records current-release evidence. An
+**Unverifiable** release is still captured, with its missing provider checksum
+called out in the detail text.
+Source-refresh failures remain visible separately from earlier release errors.
 
 Changing the root refreshes status only. It never moves, deletes, or syncs
 existing archive data. A project whose old copy lives elsewhere is shown as
