@@ -35,6 +35,14 @@ Component licence provenance:
   <https://github.com/aaubry/YamlDotNet/blob/v18.1.0/LICENSE.txt>
 - Microsoft.Extensions:
   <https://github.com/dotnet/runtime/blob/v10.0.12/LICENSE.TXT>
+- Omarchy theme colour palettes (adapted in
+  `src/ControlTower.Core/Appearance/ThemeCatalog.cs` from `themes/*/colors.toml`
+  at commit `c0b10882e6e9e69eeca5773312ff4b527a25eff7`):
+  <https://github.com/omacom/omarchy/blob/c0b10882e6e9e69eeca5773312ff4b527a25eff7/LICENSE>
+
+## MIT licence - Omarchy theme colour palettes
+
+Copyright (c) David Heinemeier Hansson
 
 ## MIT licence - SSH.NET
 
@@ -57,7 +65,7 @@ Copyright (c) .NET Foundation and Contributors
 
 All rights reserved.
 
-For each component listed in the four sections immediately above:
+For each component listed in the five sections immediately above:
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

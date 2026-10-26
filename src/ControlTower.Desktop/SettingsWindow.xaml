@@ -13,9 +13,38 @@
         Style="{StaticResource BaseWindowStyle}"
         Background="{DynamicResource WindowBackgroundBrush}"
         Foreground="{DynamicResource PrimaryTextBrush}">
+    <Window.Resources>
+        <DataTemplate x:Key="ThemeOptionTemplate">
+            <StackPanel Orientation="Horizontal">
+                <Border Background="{Binding Background}"
+                        BorderBrush="{Binding Border}"
+                        BorderThickness="1"
+                        CornerRadius="4"
+                        Padding="4,3"
+                        Margin="0,0,8,0">
+                    <ItemsControl ItemsSource="{Binding Swatches}" Focusable="False">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <StackPanel Orientation="Horizontal" />
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Ellipse Width="8" Height="8" Margin="1,0" Fill="{Binding}" />
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </Border>
+                <TextBlock Text="{Binding DisplayName}" VerticalAlignment="Center" />
+                <TextBlock Text="{Binding Source, StringFormat='  ·  {0}'}"
+                           VerticalAlignment="Center"
+                           Foreground="{DynamicResource SecondaryTextBrush}" />
+            </StackPanel>
+        </DataTemplate>
+    </Window.Resources>
     <DockPanel>
     <controls:WindowTitleBar DockPanel.Dock="Top" />
-    <Border DockPanel.Dock="Top" Height="3" Background="{StaticResource BrandStripBrush}" />
+    <Border DockPanel.Dock="Top" Height="3" Background="{DynamicResource BrandStripBrush}" />
     <Grid Margin="16">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
@@ -43,6 +72,32 @@
                 <TextBlock Text="APPEARANCE"
                            Style="{StaticResource SectionTitleStyle}"
                            Margin="0,0,0,8" />
+                <TextBlock Text="Dark theme"
+                           Foreground="{DynamicResource SecondaryTextBrush}"
+                           Margin="0,0,0,6" />
+                <ComboBox x:Name="DarkThemeCombo"
+                          Width="320"
+                          HorizontalAlignment="Left"
+                          ItemTemplate="{StaticResource ThemeOptionTemplate}"
+                          SelectionChanged="ThemeSelectionChanged" />
+                <TextBlock Text="Light theme"
+                           Foreground="{DynamicResource SecondaryTextBrush}"
+                           Margin="0,12,0,6" />
+                <ComboBox x:Name="LightThemeCombo"
+                          Width="320"
+                          HorizontalAlignment="Left"
+                          ItemTemplate="{StaticResource ThemeOptionTemplate}"
+                          SelectionChanged="ThemeSelectionChanged" />
+                <CheckBox x:Name="DistinctGitStatesCheckBox"
+                          Content="Keep Git-state colours distinct"
+                          Margin="0,12,0,0"
+                          Checked="ThemeSelectionChanged"
+                          Unchecked="ThemeSelectionChanged" />
+                <TextBlock Text="The header toggle switches between your dark and light themes. Some themes use near-identical colours for clean, uncommitted and failing repositories; this option blends those back towards the built-in colours."
+                           Style="{StaticResource CaptionTextStyle}"
+                           TextWrapping="Wrap"
+                           Margin="0,6,0,16" />
+
                 <TextBlock Text="Accent colour"
                            Foreground="{DynamicResource SecondaryTextBrush}"
                            Margin="0,0,0,6" />
@@ -50,10 +105,10 @@
                           Width="240"
                           HorizontalAlignment="Left"
                           SelectionChanged="AccentComboChanged">
-                    <ComboBoxItem Content="Tower cyan (brand)" />
+                    <ComboBoxItem Content="Theme accent" />
                     <ComboBoxItem Content="Windows accent (system)" />
                 </ComboBox>
-                <TextBlock Text="Applies immediately. Tower cyan is the app's brand accent; Windows accent follows your system colour."
+                <TextBlock Text="Applies immediately. Theme accent uses the selected theme's colour (Tower cyan for the built-in themes); Windows accent follows your system colour."
                            Style="{StaticResource CaptionTextStyle}"
                            TextWrapping="Wrap"
                            Margin="0,6,0,16" />
