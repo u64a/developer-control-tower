@@ -8,6 +8,18 @@ namespace ControlTower.Core.Appearance
     }
 
     /// <summary>
+    /// Semantic identity of the subtle decorative pattern a theme asks for,
+    /// if any. This names the motif only; the desktop project owns how (or
+    /// whether) it actually renders one.
+    /// </summary>
+    public enum ThemeDecorativePattern
+    {
+        None,
+        Christmas,
+        Halloween
+    }
+
+    /// <summary>
     /// A fully resolved set of colours, one per brush the desktop app binds
     /// to. Every theme, built-in or imported, is reduced to this shape.
     /// </summary>
@@ -45,10 +57,11 @@ namespace ControlTower.Core.Appearance
         public ThemeColor RepoAhead { get; init; }
         public ThemeColor RepoAheadSubtle { get; init; }
 
-        /// <summary>Three stops of the thin brand strip under each title bar.</summary>
+        /// <summary>Colours of the thin brand strip under each title bar.</summary>
         public ThemeColor BrandStripStart { get; init; }
         public ThemeColor BrandStripMiddle { get; init; }
         public ThemeColor BrandStripEnd { get; init; }
+        public ThemeColor? BrandStripFourth { get; init; }
     }
 
     /// <summary>
@@ -80,12 +93,14 @@ namespace ControlTower.Core.Appearance
     /// <summary>A selectable theme. Exactly one of the palettes is set.</summary>
     public sealed class ThemeDefinition
     {
-        public ThemeDefinition(string id, string displayName, ThemePalette palette)
+        public ThemeDefinition(string id, string displayName, ThemePalette palette,
+            ThemeDecorativePattern pattern = ThemeDecorativePattern.None)
         {
             Id = id;
             DisplayName = displayName;
             Mode = palette.Mode;
             BuiltInPalette = palette;
+            Pattern = pattern;
         }
 
         public ThemeDefinition(string id, string displayName, OmarchyPalette palette)
@@ -94,6 +109,7 @@ namespace ControlTower.Core.Appearance
             DisplayName = displayName;
             Mode = palette.Mode;
             OmarchyPalette = palette;
+            Pattern = ThemeDecorativePattern.None;
         }
 
         /// <summary>Stable, lower-case kebab-case identifier persisted on disk.</summary>
@@ -106,6 +122,11 @@ namespace ControlTower.Core.Appearance
 
         /// <summary>Set for themes adapted from Omarchy.</summary>
         public OmarchyPalette OmarchyPalette { get; }
+
+        /// <summary>
+        /// The decorative motif, or None for a plain theme.
+        /// </summary>
+        public ThemeDecorativePattern Pattern { get; }
 
         public bool IsBuiltIn => BuiltInPalette != null;
         public string Source => IsBuiltIn ? "Developer Control Tower" : "Omarchy";

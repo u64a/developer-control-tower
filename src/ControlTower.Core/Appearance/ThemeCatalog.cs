@@ -5,9 +5,11 @@ using System.Linq;
 namespace ControlTower.Core.Appearance
 {
     /// <summary>
-    /// Every selectable theme: the two hand-tuned built-ins plus palettes
-    /// adapted from Omarchy (https://github.com/omacom/omarchy, MIT,
-    /// <c>themes/*/colors.toml</c> at commit c0b10882).
+    /// Every selectable theme: the two Control Tower built-ins, six further
+    /// hand-tuned retro-console and holiday palettes (also Developer Control
+    /// Tower's own), plus palettes adapted from Omarchy
+    /// (https://github.com/omacom/omarchy, MIT, <c>themes/*/colors.toml</c>
+    /// at commit c0b10882).
     /// </summary>
     public static class ThemeCatalog
     {
@@ -88,10 +90,232 @@ namespace ControlTower.Core.Appearance
             BrandStripEnd = BrandGreen
         });
 
+        // Six original, hand-tuned retro-console and holiday palettes
+        // (Developer Control Tower's own; no official console artwork or
+        // logos). christmas and halloween also carry a subtle, semantic
+        // decorative-pattern identity the desktop project renders.
+
+        private static readonly ThemeDefinition XboxOg = new("xbox-og", "Xbox OG Dashboard", new ThemePalette
+        {
+            Mode = ThemeVariant.Dark,
+            WindowBackground = C("#0B1008"),
+            PaneBackground = C("#1a2818"),
+            CardBackground = C("#202020"),
+            PanelSubtle = C("#2a3a28"),
+            CardBorder = C("#3d5938"),
+            SecondaryBorder = C("#4a6a45"),
+            PrimaryText = C("#E8FF7A"),
+            SecondaryText = C("#B8CB86"),
+            StatusBackground = C("#1a2818"),
+            TagBackground = C("#2a3a28"),
+            Accent = C("#88DD00"),
+            AccentForeground = C("#000000"),
+            AccentSubtle = C("#1f4a1a"),
+            ListHover = C("#2a3a28"),
+            ListSelected = C("#2d5a3a"),
+            Success = C("#7BD97B"),
+            SuccessSubtle = C("#1E3A1E"),
+            Caution = C("#FFB26B"),
+            CautionSubtle = C("#3A2C14"),
+            Critical = C("#FF6E6E"),
+            CriticalSubtle = C("#3A1E1E"),
+            Info = C("#5AA6FF"),
+            InfoSubtle = C("#15304D"),
+            Neutral = C("#A6B2C4"),
+            NeutralSubtle = C("#262E3A"),
+            RepoAhead = C("#45C7B8"),
+            RepoAheadSubtle = C("#103833"),
+            BrandStripStart = C("#88DD00"),
+            BrandStripMiddle = C("#66BB00"),
+            BrandStripEnd = C("#44AA00")
+        });
+
+        private static readonly ThemeDefinition Ps3Xmb = new("ps3-xmb", "PS3 XMB", new ThemePalette
+        {
+            Mode = ThemeVariant.Dark,
+            WindowBackground = C("#0F0319"),
+            PaneBackground = C("#1a1a3a"),
+            CardBackground = C("#242854"),
+            PanelSubtle = C("#2d2d5d"),
+            CardBorder = C("#3d3d7a"),
+            SecondaryBorder = C("#4a4a8a"),
+            PrimaryText = C("#E8D5FF"),
+            SecondaryText = C("#C0A8D8"),
+            StatusBackground = C("#1a1a3a"),
+            TagBackground = C("#2d2d5d"),
+            Accent = C("#B488FF"),
+            AccentForeground = C("#000000"),
+            AccentSubtle = C("#3d2d6a"),
+            ListHover = C("#2d2d5d"),
+            ListSelected = C("#3a3a7a"),
+            Success = C("#7BD97B"),
+            SuccessSubtle = C("#1E3A1E"),
+            Caution = C("#FFB26B"),
+            CautionSubtle = C("#3A2C14"),
+            Critical = C("#FF6E6E"),
+            CriticalSubtle = C("#3A1E1E"),
+            Info = C("#5AA6FF"),
+            InfoSubtle = C("#15304D"),
+            Neutral = C("#A6B2C4"),
+            NeutralSubtle = C("#262E3A"),
+            RepoAhead = C("#45C7B8"),
+            RepoAheadSubtle = C("#103833"),
+            BrandStripStart = C("#B488FF"),
+            BrandStripMiddle = C("#8866DD"),
+            BrandStripEnd = C("#6644BB")
+        });
+
+        private static readonly ThemeDefinition NesGrey = new("nes-grey", "NES Console", new ThemePalette
+        {
+            Mode = ThemeVariant.Light,
+            WindowBackground = C("#D9D9D9"),
+            PaneBackground = C("#EFEFEF"),
+            CardBackground = C("#FFFFFF"),
+            PanelSubtle = C("#E8E8E8"),
+            CardBorder = C("#B8B8B8"),
+            SecondaryBorder = C("#A8A8A8"),
+            PrimaryText = C("#2A2A2A"),
+            SecondaryText = C("#5C5C5C"),
+            StatusBackground = C("#F0F0F0"),
+            TagBackground = C("#E8E8E8"),
+            Accent = C("#CC3333"),
+            AccentForeground = C("#FFFFFF"),
+            AccentSubtle = C("#F5D9D9"),
+            ListHover = C("#E8E8E8"),
+            ListSelected = C("#D9D9D9"),
+            Success = C("#236329"),
+            SuccessSubtle = C("#E8F5E8"),
+            Caution = C("#80510A"),
+            CautionSubtle = C("#F5E8D9"),
+            Critical = C("#B42128"),
+            CriticalSubtle = C("#F5D9D9"),
+            Info = C("#24518B"),
+            InfoSubtle = C("#D9E8F5"),
+            Neutral = C("#545454"),
+            NeutralSubtle = C("#E0E0E0"),
+            RepoAhead = C("#176557"),
+            RepoAheadSubtle = C("#D9F5F0"),
+            BrandStripStart = C("#CC3333"),
+            BrandStripMiddle = C("#BB2222"),
+            BrandStripEnd = C("#AA1111")
+        });
+
+        private static readonly ThemeDefinition SuperFamicom = new("super-famicom", "Super Famicom", new ThemePalette
+        {
+            Mode = ThemeVariant.Light,
+            WindowBackground = C("#E0DED8"),
+            PaneBackground = C("#F5F3F0"),
+            CardBackground = C("#FFFFFF"),
+            PanelSubtle = C("#EDE8E0"),
+            CardBorder = C("#C8C0B8"),
+            SecondaryBorder = C("#B8B0A8"),
+            PrimaryText = C("#2A2825"),
+            SecondaryText = C("#5F584F"),
+            StatusBackground = C("#F8F6F3"),
+            TagBackground = C("#EDE8E0"),
+            Accent = C("#B83528"),
+            AccentForeground = C("#FFFFFF"),
+            AccentSubtle = C("#F5E0D9"),
+            ListHover = C("#EDE8E0"),
+            ListSelected = C("#E0D8D0"),
+            Success = C("#236329"),
+            SuccessSubtle = C("#E0F5E0"),
+            Caution = C("#80510A"),
+            CautionSubtle = C("#F5E8D0"),
+            Critical = C("#B42128"),
+            CriticalSubtle = C("#F5D0D0"),
+            Info = C("#24518B"),
+            InfoSubtle = C("#D9E8F5"),
+            Neutral = C("#545454"),
+            NeutralSubtle = C("#E8E0D8"),
+            RepoAhead = C("#176557"),
+            RepoAheadSubtle = C("#D8F0E8"),
+            BrandStripStart = C("#D93636"),
+            BrandStripMiddle = C("#E6B92E"),
+            BrandStripEnd = C("#27864B"),
+            BrandStripFourth = C("#315CB8")
+        });
+
+        private static readonly ThemeDefinition Halloween = new("halloween", "Halloween", new ThemePalette
+        {
+            Mode = ThemeVariant.Dark,
+            WindowBackground = C("#1A0A0A"),
+            PaneBackground = C("#2d1515"),
+            CardBackground = C("#3a1f1f"),
+            PanelSubtle = C("#452a2a"),
+            CardBorder = C("#5a3a3a"),
+            SecondaryBorder = C("#6a4545"),
+            PrimaryText = C("#FFD9A8"),
+            SecondaryText = C("#D9A575"),
+            StatusBackground = C("#2d1515"),
+            TagBackground = C("#452a2a"),
+            Accent = C("#FF8833"),
+            AccentForeground = C("#000000"),
+            AccentSubtle = C("#5a2a1a"),
+            ListHover = C("#452a2a"),
+            ListSelected = C("#5a3a2a"),
+            Success = C("#7BD97B"),
+            SuccessSubtle = C("#1E3A1E"),
+            Caution = C("#FFB26B"),
+            CautionSubtle = C("#3A2C14"),
+            Critical = C("#FF6E6E"),
+            CriticalSubtle = C("#3A1E1E"),
+            Info = C("#5AA6FF"),
+            InfoSubtle = C("#15304D"),
+            Neutral = C("#A6B2C4"),
+            NeutralSubtle = C("#262E3A"),
+            RepoAhead = C("#45C7B8"),
+            RepoAheadSubtle = C("#103833"),
+            BrandStripStart = C("#FF8833"),
+            BrandStripMiddle = C("#7a3aaa"),
+            BrandStripEnd = C("#5a2aaa")
+        }, ThemeDecorativePattern.Halloween);
+
+        private static readonly ThemeDefinition Christmas = new("christmas", "White Christmas", new ThemePalette
+        {
+            Mode = ThemeVariant.Light,
+            WindowBackground = C("#F4F7FA"),
+            PaneBackground = C("#FFFFFF"),
+            CardBackground = C("#FFFFFF"),
+            PanelSubtle = C("#EDF2F6"),
+            CardBorder = C("#D5DFE5"),
+            SecondaryBorder = C("#A5B8AF"),
+            PrimaryText = C("#193C30"),
+            SecondaryText = C("#55645F"),
+            StatusBackground = C("#F8FAFC"),
+            TagBackground = C("#EDF3EF"),
+            Accent = C("#BE2839"),
+            AccentForeground = C("#FFFFFF"),
+            AccentSubtle = C("#FCECEF"),
+            ListHover = C("#EDF4F0"),
+            ListSelected = C("#E5EFE8"),
+            Success = C("#236329"),
+            SuccessSubtle = C("#E7F2E9"),
+            Caution = C("#80510A"),
+            CautionSubtle = C("#FBF0D8"),
+            Critical = C("#B42128"),
+            CriticalSubtle = C("#FBE7EA"),
+            Info = C("#24518B"),
+            InfoSubtle = C("#E7EEF8"),
+            Neutral = C("#545454"),
+            NeutralSubtle = C("#EDF0F2"),
+            RepoAhead = C("#176557"),
+            RepoAheadSubtle = C("#E3F2EB"),
+            BrandStripStart = C("#BE2839"),
+            BrandStripMiddle = C("#C89B3C"),
+            BrandStripEnd = C("#236B49")
+        }, ThemeDecorativePattern.Christmas);
+
         private static readonly IReadOnlyList<ThemeDefinition> Themes = new[]
         {
             ControlTowerDark,
             ControlTowerLight,
+            XboxOg,
+            Ps3Xmb,
+            NesGrey,
+            SuperFamicom,
+            Halloween,
+            Christmas,
             //                          mode          accent     selection  muted      background dark_bg    darker_bg  lighter_bg foreground dark_fg    light_fg   bright_fg  red        yellow     orange     green      cyan       blue
             O("tokyo-night", "Tokyo Night", ThemeVariant.Dark, "#7aa2f7", "#292e42", "#414868", "#1a1b26", "#13141c", "#0e0e14", "#24283b", "#a9b1d6", "#565f89", "#b4bee6", "#c0caf5", "#f7768e", "#e0af68", "#eb927b", "#9ece6a", "#449dab", "#7aa2f7"),
             O("catppuccin", "Catppuccin", ThemeVariant.Dark, "#89b4fa", "#45475a", "#585b70", "#1e1e2e", "#161622", "#101019", "#313244", "#cdd6f4", "#6c7086", "#bac2de", "#cdd6f4", "#f38ba8", "#f9e2af", "#f6b6ab", "#a6e3a1", "#94e2d5", "#89b4fa"),
