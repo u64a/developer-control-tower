@@ -118,6 +118,15 @@ namespace ControlTower.Core.Appearance
                 : ThemeColor.White;
         }
 
+        /// <summary>Hover shade that moves away from the button text, so hovering never lowers its contrast.</summary>
+        public static ThemeColor AccentHover(ThemeColor accent, ThemeColor foreground)
+        {
+            var delta = foreground.RelativeLuminance < accent.RelativeLuminance ? 24 : -24;
+            return new ThemeColor(ShiftChannel(accent.R, delta), ShiftChannel(accent.G, delta), ShiftChannel(accent.B, delta));
+        }
+
+        private static byte ShiftChannel(byte value, int delta) => (byte)Math.Clamp(value + delta, 0, 255);
+
         /// <summary>Moves <paramref name="color"/> towards <paramref name="toward"/> until it meets the contrast target.</summary>
         private static ThemeColor ReadableOn(ThemeColor color, ThemeColor toward, ThemeColor background, double target)
         {

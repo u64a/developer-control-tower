@@ -129,7 +129,7 @@ public class ThemeResolverTests
         Assert.Equal("#F2F5F8", p.PrimaryText.ToHex());
         Assert.Equal("#B8C2D4", p.SecondaryText.ToHex());
         Assert.Equal("#4CC2FF", p.Accent.ToHex());
-        Assert.Equal("#FFFFFF", p.AccentForeground.ToHex());
+        Assert.Equal("#11161D", p.AccentForeground.ToHex());   // dark text: white on cyan was ~2.1:1
         Assert.Equal("#7BD97B", p.Success.ToHex());
         Assert.Equal("#FFB26B", p.Caution.ToHex());
         Assert.Equal("#FF6E6E", p.Critical.ToHex());
@@ -216,10 +216,24 @@ public class ThemeResolverTests
 
         Assert.True(p.PrimaryText.ContrastWith(p.PaneBackground) >= 4.5, id + " body text");
         Assert.True(p.SecondaryText.ContrastWith(p.PaneBackground) >= ThemeResolver.MinimumSecondaryTextContrast, id + " secondary text");
-        if (!ThemeCatalog.TryGet(id, out var theme) || !theme.IsBuiltIn)
+        Assert.True(p.AccentForeground.ContrastWith(p.Accent) >= 4.5, id + " accent button text");
+        var hover = ThemeResolver.AccentHover(p.Accent, p.AccentForeground);
+        Assert.True(p.AccentForeground.ContrastWith(hover) >= p.AccentForeground.ContrastWith(p.Accent), id + " hover keeps contrast");
+    }
+
+    [Theory]
+    [InlineData("#5AA6FF")] // dark-mode fallback
+    [InlineData("#0F6CBD")] // light-mode fallback
+    [InlineData("#FFB900")] // bright Windows gold
+    [InlineData("#0063B1")] // default Windows blue
+    public void WindowsAccent_GetsReadableText(string accentHex)
+    {
+        var accent = ThemeColor.Parse(accentHex);
+        foreach (var mode in new[] { ThemeVariant.Dark, ThemeVariant.Light })
         {
-            // Built-ins keep their shipped white-on-cyan buttons.
-            Assert.True(p.AccentForeground.ContrastWith(p.Accent) >= 4.5, id + " accent button text");
+            var p = ThemeResolver.Resolve(ThemeCatalog.BuiltInFor(mode), keepGitStatesDistinct: true);
+            var foreground = ThemeResolver.ForegroundFor(accent, p.WindowBackground, p.PrimaryText);
+            Assert.True(foreground.ContrastWith(accent) >= 4.5, accentHex + " " + mode);
         }
     }
 

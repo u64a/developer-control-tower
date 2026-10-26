@@ -211,30 +211,30 @@ namespace ControlTower.Desktop
         private void ApplyAccentFromSystem()
         {
             // TowerCyan means "the theme's own accent" (cyan for the built-ins).
-            var accent = ToColor(_palette.Accent);
-            var accentForeground = ToColor(_palette.AccentForeground);
+            var accentTheme = _palette.Accent;
+            var accentForegroundTheme = _palette.AccentForeground;
             if (_accentPreference == AccentPreference.WindowsAccent)
             {
                 var osAccent = SystemAccentReader.TryReadAccent();
                 if (osAccent.HasValue)
                 {
-                    accent = osAccent.Value;
+                    accentTheme = new ThemeColor(osAccent.Value.R, osAccent.Value.G, osAccent.Value.B);
                 }
                 else
                 {
                     // Brand fallback matches the previous hardcoded values.
-                    accent = IsDarkMode
-                        ? (Color)ColorConverter.ConvertFromString("#5AA6FF")
-                        : (Color)ColorConverter.ConvertFromString("#0F6CBD");
+                    accentTheme = ThemeColor.Parse(IsDarkMode ? "#5AA6FF" : "#0F6CBD");
                 }
-                accentForeground = Colors.White;
+                // The OS accent can be light or dark, so pick readable text for it.
+                accentForegroundTheme = ThemeResolver.ForegroundFor(accentTheme, _palette.WindowBackground, _palette.PrimaryText);
             }
 
-            var accentForegroundBrush = new SolidColorBrush(accentForeground);
+            var accent = ToColor(accentTheme);
+            var accentForegroundBrush = new SolidColorBrush(ToColor(accentForegroundTheme));
             accentForegroundBrush.Freeze();
             Resources["AccentForegroundBrush"] = accentForegroundBrush;
 
-            var hover = Shift(accent, IsDarkMode ? +24 : -24);
+            var hover = ToColor(ThemeResolver.AccentHover(accentTheme, accentForegroundTheme));
             var light1 = Shift(accent, +20);
             var light2 = Shift(accent, +40);
             var dark1 = Shift(accent, -20);

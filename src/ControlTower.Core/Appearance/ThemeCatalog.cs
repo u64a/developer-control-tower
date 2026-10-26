@@ -32,7 +32,7 @@ namespace ControlTower.Core.Appearance
             StatusBackground = C("#16202C"),
             TagBackground = C("#202938"),
             Accent = BrandCyan,
-            AccentForeground = ThemeColor.White,
+            AccentForeground = C("#11161D"),
             AccentSubtle = C("#17304D"),
             ListHover = C("#232D3D"),
             ListSelected = C("#1F3958"),
