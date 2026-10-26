@@ -1,8 +1,10 @@
 using System;
+using System.ComponentModel;
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Effects;
 using ControlTower.Core.Appearance;
+using ControlTower.Desktop.Appearance;
 using ControlTower.Desktop.Bootstrap;
 using ControlTower.Desktop.Interop;
 using ControlTower.Infrastructure.Diagnostics;
@@ -70,6 +72,7 @@ namespace ControlTower.Desktop
             }
 
             _themeObserver = new SystemThemeObserver(OnSystemPreferenceChanged);
+            SystemParameters.StaticPropertyChanged += OnSystemParameterChanged;
 
             CompositionRoot = new CompositionRoot();
             AppLogger.Info("startup", "Settings path: " + CompositionRoot.SettingsPath);
@@ -85,7 +88,16 @@ namespace ControlTower.Desktop
         {
             AppLogger.Info("shutdown", "Developer Control Tower exiting.");
             _themeObserver?.Dispose();
+            SystemParameters.StaticPropertyChanged -= OnSystemParameterChanged;
             base.OnExit(e);
+        }
+
+        private void OnSystemParameterChanged(object sender, PropertyChangedEventArgs e)
+        {
+            if (e.PropertyName == nameof(SystemParameters.HighContrast))
+            {
+                Dispatcher.BeginInvoke(new Action(() => ApplyTheme(IsDarkMode)));
+            }
         }
 
         private void OnSystemPreferenceChanged()
@@ -127,7 +139,7 @@ namespace ControlTower.Desktop
             _palette = ThemeResolver.Resolve(theme, _themeSelection.KeepGitStatesDistinct);
             var p = _palette;
 
-            SetBrush("WindowBackgroundBrush", p.WindowBackground);
+            SetWindowBackground(theme, p);
             SetBrush("PaneBackgroundBrush", p.PaneBackground);
             SetBrush("CardBackgroundBrush", p.CardBackground);
             SetBrush("PanelSubtleBrush", p.PanelSubtle);
@@ -158,8 +170,12 @@ namespace ControlTower.Desktop
 
             var strip = new LinearGradientBrush { StartPoint = new Point(0, 0), EndPoint = new Point(1, 0) };
             strip.GradientStops.Add(new GradientStop(ToColor(p.BrandStripStart), 0));
-            strip.GradientStops.Add(new GradientStop(ToColor(p.BrandStripMiddle), 0.55));
-            strip.GradientStops.Add(new GradientStop(ToColor(p.BrandStripEnd), 1));
+            strip.GradientStops.Add(new GradientStop(ToColor(p.BrandStripMiddle), p.BrandStripFourth.HasValue ? 1.0 / 3 : 0.55));
+            strip.GradientStops.Add(new GradientStop(ToColor(p.BrandStripEnd), p.BrandStripFourth.HasValue ? 2.0 / 3 : 1));
+            if (p.BrandStripFourth is ThemeColor fourth)
+            {
+                strip.GradientStops.Add(new GradientStop(ToColor(fourth), 1));
+            }
             strip.Freeze();
             Resources["BrandStripBrush"] = strip;
 
@@ -307,6 +323,28 @@ namespace ControlTower.Desktop
         private void SetBrush(string resourceKey, ThemeColor color)
         {
             Resources[resourceKey] = new SolidColorBrush(ToColor(color));
+        }
+
+        /// <summary>
+        /// Sets the one brush that may carry a theme's decorative pattern.
+        /// Every other surface (rows, cards, panels, dialog controls, text)
+        /// keeps its own solid brush regardless, so this never affects
+        /// readability. Switching to a theme without a pattern - or to a
+        /// plain solid colour when Windows high contrast is on - always
+        /// clears any previously applied pattern.
+        /// </summary>
+        private void SetWindowBackground(ThemeDefinition theme, ThemePalette p)
+        {
+            var background = ToColor(p.WindowBackground);
+            if (theme.Pattern == ThemeDecorativePattern.None || SystemParameters.HighContrast)
+            {
+                SetBrush("WindowBackgroundBrush", p.WindowBackground);
+                return;
+            }
+
+            Resources["WindowBackgroundBrush"] = theme.Pattern == ThemeDecorativePattern.Christmas
+                ? HolidayPatternBrushes.Christmas(background)
+                : HolidayPatternBrushes.Halloween(background);
         }
 
         private void SetGlow(string resourceKey, ThemeColor color, double blurRadius, double opacity)

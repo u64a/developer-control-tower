@@ -61,15 +61,15 @@ public class ThemeColorTests
 
 public class ThemeCatalogTests
 {
-    private static readonly string[] LightIds = { "control-tower-light", "rose-pine", "catppuccin-latte", "flexoki-light", "lupine", "white" };
+    private static readonly string[] LightIds = { "control-tower-light", "nes-grey", "super-famicom", "christmas", "rose-pine", "catppuccin-latte", "flexoki-light", "lupine", "white" };
 
     public static IEnumerable<object[]> AllThemeIds() => ThemeCatalog.All.Select(t => new object[] { t.Id });
 
     [Fact]
     public void Catalog_HasBuiltInsPlusAllOmarchyThemes()
     {
-        Assert.Equal(25, ThemeCatalog.All.Count);
-        Assert.Equal(2, ThemeCatalog.All.Count(t => t.IsBuiltIn));
+        Assert.Equal(31, ThemeCatalog.All.Count);
+        Assert.Equal(8, ThemeCatalog.All.Count(t => t.IsBuiltIn));
         Assert.Equal(ThemeCatalog.DefaultDarkId, ThemeCatalog.ForMode(ThemeVariant.Dark)[0].Id);
         Assert.Equal(ThemeCatalog.DefaultLightId, ThemeCatalog.ForMode(ThemeVariant.Light)[0].Id);
     }
@@ -86,7 +86,7 @@ public class ThemeCatalogTests
     public void Modes_MatchTheSourceThemes()
     {
         Assert.Equal(LightIds.OrderBy(i => i), ThemeCatalog.ForMode(ThemeVariant.Light).Select(t => t.Id).OrderBy(i => i));
-        Assert.Equal(19, ThemeCatalog.ForMode(ThemeVariant.Dark).Count);
+        Assert.Equal(22, ThemeCatalog.ForMode(ThemeVariant.Dark).Count);
     }
 
     [Theory]
@@ -98,6 +98,36 @@ public class ThemeCatalogTests
     public void GetForMode_FallsBackToBuiltInForUnknownOrWrongMode(string? id, ThemeVariant mode, string expected)
     {
         Assert.Equal(expected, ThemeCatalog.GetForMode(id, mode).Id);
+    }
+
+    [Theory]
+    [InlineData("xbox-og", ThemeVariant.Dark, ThemeDecorativePattern.None)]
+    [InlineData("ps3-xmb", ThemeVariant.Dark, ThemeDecorativePattern.None)]
+    [InlineData("nes-grey", ThemeVariant.Light, ThemeDecorativePattern.None)]
+    [InlineData("super-famicom", ThemeVariant.Light, ThemeDecorativePattern.None)]
+    [InlineData("halloween", ThemeVariant.Dark, ThemeDecorativePattern.Halloween)]
+    [InlineData("christmas", ThemeVariant.Light, ThemeDecorativePattern.Christmas)]
+    public void ThemePacks_ResolveOnlyInTheirModeWithReadableContent(string id, ThemeVariant mode, ThemeDecorativePattern pattern)
+    {
+        var theme = ThemeCatalog.GetForMode(id, mode);
+        Assert.Equal(id, theme.Id);
+        Assert.Equal(pattern, theme.Pattern);
+        var opposite = mode == ThemeVariant.Dark ? ThemeVariant.Light : ThemeVariant.Dark;
+        Assert.Same(ThemeCatalog.BuiltInFor(opposite), ThemeCatalog.GetForMode(id, opposite));
+
+        var palette = ThemeResolver.Resolve(theme, keepGitStatesDistinct: true);
+        var surfaces = new[] { palette.WindowBackground, palette.PaneBackground, palette.CardBackground,
+            palette.PanelSubtle, palette.ListSelected, palette.ListHover };
+        foreach (var surface in surfaces)
+        {
+            Assert.True(palette.PrimaryText.ContrastWith(surface) >= 4.5, id + " primary text");
+            Assert.True(palette.SecondaryText.ContrastWith(surface) >= 4.5, id + " secondary text");
+        }
+        var chips = new[] { (palette.Success, palette.SuccessSubtle), (palette.Caution, palette.CautionSubtle),
+            (palette.Critical, palette.CriticalSubtle), (palette.Info, palette.InfoSubtle),
+            (palette.Neutral, palette.NeutralSubtle), (palette.RepoAhead, palette.RepoAheadSubtle) };
+        Assert.All(chips, chip => Assert.True(chip.Item1.ContrastWith(chip.Item2) >= 4.5, id + " status chip"));
+        Assert.False(ThemeResolver.HasIndistinctGitStates(palette), id);
     }
 }
 
