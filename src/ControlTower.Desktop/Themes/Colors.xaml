@@ -21,6 +21,17 @@
     <!-- Aliases used by older code paths. -->
     <SolidColorBrush x:Key="PositiveBrush" Color="#7BD97B" />
 
+    <!-- Text on accent-filled surfaces (primary buttons). -->
+    <SolidColorBrush x:Key="AccentForegroundBrush" Color="#FFFFFF" />
+
+    <!-- Status lamp glows; reseeded per theme in App.xaml.cs. -->
+    <DropShadowEffect x:Key="SuccessGlowEffect" Color="#7BD97B" BlurRadius="8" ShadowDepth="0" Opacity="0.8" />
+    <DropShadowEffect x:Key="AheadGlowEffect" Color="#45C7B8" BlurRadius="8" ShadowDepth="0" Opacity="0.8" />
+    <DropShadowEffect x:Key="InfoGlowEffect" Color="#5AA6FF" BlurRadius="8" ShadowDepth="0" Opacity="0.8" />
+    <DropShadowEffect x:Key="CautionGlowEffect" Color="#FFB26B" BlurRadius="8" ShadowDepth="0" Opacity="0.8" />
+    <DropShadowEffect x:Key="CriticalGlowEffect" Color="#FF6E6E" BlurRadius="9" ShadowDepth="0" Opacity="0.9" />
+    <DropShadowEffect x:Key="CriticalSoftGlowEffect" Color="#FF6E6E" BlurRadius="8" ShadowDepth="0" Opacity="0.75" />
+
     <!-- System accent shades. App.xaml.cs reseeds these from the OS
          accent at startup and on UserPreferenceChanged. Defaults below
          match Windows 11 default blue (#0078D4) at light tint variants. -->

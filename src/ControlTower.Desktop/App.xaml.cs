@@ -1,6 +1,8 @@
 using System;
 using System.Windows;
 using System.Windows.Media;
+using System.Windows.Media.Effects;
+using ControlTower.Core.Appearance;
 using ControlTower.Desktop.Bootstrap;
 using ControlTower.Desktop.Interop;
 using ControlTower.Infrastructure.Diagnostics;
@@ -26,9 +28,15 @@ namespace ControlTower.Desktop
         private readonly ThemePreferenceStore _themePreferences = new();
         private readonly AccentPreferenceStore _accentPreferences = new();
         private AccentPreference _accentPreference = AccentPreference.TowerCyan;
+        private readonly ThemeSelectionStore _themeSelections = new();
+        private ThemeSelection _themeSelection = ThemeSelection.Default;
+        private ThemePalette _palette = ThemeCatalog.BuiltInFor(ThemeVariant.Dark).BuiltInPalette;
 
-        /// <summary>The user's current accent choice (brand cyan or OS accent).</summary>
+        /// <summary>The user's current accent choice (theme accent or OS accent).</summary>
         public AccentPreference AccentPreference => _accentPreference;
+
+        /// <summary>Which theme fills the dark and light slots.</summary>
+        public ThemeSelection ThemeSelection => _themeSelection;
 
         protected override void OnStartup(StartupEventArgs e)
         {
@@ -40,6 +48,7 @@ namespace ControlTower.Desktop
             // (ApplyTheme reseeds the accent), so the brand vs Windows-accent
             // choice is honoured on first paint.
             _accentPreference = _accentPreferences.Read();
+            _themeSelection = _themeSelections.Read();
 
             // Resolve initial theme. A persisted user preference wins over
             // the OS setting and locks the session into manual-override mode
@@ -113,74 +122,56 @@ namespace ControlTower.Desktop
         {
             IsDarkMode = darkMode;
 
-            if (darkMode)
-            {
-                SetBrush("WindowBackgroundBrush", "#11161D");
-                SetBrush("PaneBackgroundBrush", "#18202B");
-                SetBrush("CardBackgroundBrush", "#18202B");
-                SetBrush("PanelSubtleBrush", "#202938");
-                SetBrush("CardBorderBrush", "#2F3A4B");
-                SetBrush("SecondaryBorderBrush", "#3D4A5F");
-                SetBrush("PrimaryTextBrush", "#F2F5F8");
-                SetBrush("SecondaryTextBrush", "#B8C2D4");
-                SetBrush("AccentSubtleBrush", "#17304D");
-                SetBrush("ListHoverBrush", "#232D3D");
-                SetBrush("ListSelectedBrush", "#1F3958");
-                SetBrush("StatusBackgroundBrush", "#16202C");
-                SetBrush("TagBackgroundBrush", "#202938");
+            var mode = darkMode ? ThemeVariant.Dark : ThemeVariant.Light;
+            var theme = ThemeCatalog.GetForMode(_themeSelection.IdFor(mode), mode);
+            _palette = ThemeResolver.Resolve(theme, _themeSelection.KeepGitStatesDistinct);
+            var p = _palette;
 
-                // Semantic palette (dark)
-                SetBrush("SuccessBrush", "#7BD97B");
-                SetBrush("SuccessSubtleBrush", "#1E3A1E");
-                SetBrush("CautionBrush", "#FFB26B");
-                SetBrush("WarningBrush", "#FFB26B");
-                SetBrush("CriticalBrush", "#FF6E6E");
-                SetBrush("CriticalSubtleBrush", "#3A1E1E");
-                SetBrush("InfoBrush", "#5AA6FF");
-                SetBrush("NeutralBrush", "#A6B2C4");
-                SetBrush("PositiveBrush", "#7BD97B");
-                SetBrush("CautionSubtleBrush", "#3A2C14");
-                SetBrush("InfoSubtleBrush", "#15304D");
-                SetBrush("NeutralSubtleBrush", "#262E3A");
-                SetBrush("RepoAheadBrush", "#45C7B8");
-                SetBrush("RepoAheadSubtleBrush", "#103833");
-            }
-            else
-            {
-                SetBrush("WindowBackgroundBrush", "#F3F5F8");
-                SetBrush("PaneBackgroundBrush", "#FFFFFF");
-                SetBrush("CardBackgroundBrush", "#FFFFFF");
-                SetBrush("PanelSubtleBrush", "#F7F9FC");
-                SetBrush("CardBorderBrush", "#D9E0EA");
-                SetBrush("SecondaryBorderBrush", "#C9D2DF");
-                SetBrush("PrimaryTextBrush", "#19202A");
-                SetBrush("SecondaryTextBrush", "#5B6A7E");
-                SetBrush("AccentSubtleBrush", "#EAF3FF");
-                SetBrush("ListHoverBrush", "#F5F8FC");
-                SetBrush("ListSelectedBrush", "#E8F1FB");
-                SetBrush("StatusBackgroundBrush", "#F9FBFD");
-                SetBrush("TagBackgroundBrush", "#F2F5F8");
+            SetBrush("WindowBackgroundBrush", p.WindowBackground);
+            SetBrush("PaneBackgroundBrush", p.PaneBackground);
+            SetBrush("CardBackgroundBrush", p.CardBackground);
+            SetBrush("PanelSubtleBrush", p.PanelSubtle);
+            SetBrush("CardBorderBrush", p.CardBorder);
+            SetBrush("SecondaryBorderBrush", p.SecondaryBorder);
+            SetBrush("PrimaryTextBrush", p.PrimaryText);
+            SetBrush("SecondaryTextBrush", p.SecondaryText);
+            SetBrush("AccentSubtleBrush", p.AccentSubtle);
+            SetBrush("ListHoverBrush", p.ListHover);
+            SetBrush("ListSelectedBrush", p.ListSelected);
+            SetBrush("StatusBackgroundBrush", p.StatusBackground);
+            SetBrush("TagBackgroundBrush", p.TagBackground);
 
-                // Semantic palette (light)
-                SetBrush("SuccessBrush", "#0E8A00");
-                SetBrush("SuccessSubtleBrush", "#E6F4E0");
-                SetBrush("CautionBrush", "#D83B01");
-                SetBrush("WarningBrush", "#D83B01");
-                SetBrush("CriticalBrush", "#C42B1C");
-                SetBrush("CriticalSubtleBrush", "#FDE7E9");
-                SetBrush("InfoBrush", "#005FB8");
-                SetBrush("NeutralBrush", "#66758A");
-                SetBrush("PositiveBrush", "#0E8A00");
-                SetBrush("CautionSubtleBrush", "#FBEFE2");
-                SetBrush("InfoSubtleBrush", "#E9F2FC");
-                SetBrush("NeutralSubtleBrush", "#EDF0F4");
-                SetBrush("RepoAheadBrush", "#0E8C7E");
-                SetBrush("RepoAheadSubtleBrush", "#E0F4F1");
-            }
+            SetBrush("SuccessBrush", p.Success);
+            SetBrush("SuccessSubtleBrush", p.SuccessSubtle);
+            SetBrush("CautionBrush", p.Caution);
+            SetBrush("WarningBrush", p.Caution);
+            SetBrush("CriticalBrush", p.Critical);
+            SetBrush("CriticalSubtleBrush", p.CriticalSubtle);
+            SetBrush("InfoBrush", p.Info);
+            SetBrush("NeutralBrush", p.Neutral);
+            SetBrush("PositiveBrush", p.Success);
+            SetBrush("CautionSubtleBrush", p.CautionSubtle);
+            SetBrush("InfoSubtleBrush", p.InfoSubtle);
+            SetBrush("NeutralSubtleBrush", p.NeutralSubtle);
+            SetBrush("RepoAheadBrush", p.RepoAhead);
+            SetBrush("RepoAheadSubtleBrush", p.RepoAheadSubtle);
 
-            // Accent comes from the OS where possible; brand-blue fallback
-            // is reseeded inside ApplyAccentFromSystem if SystemParameters
-            // can't produce a color.
+            var strip = new LinearGradientBrush { StartPoint = new Point(0, 0), EndPoint = new Point(1, 0) };
+            strip.GradientStops.Add(new GradientStop(ToColor(p.BrandStripStart), 0));
+            strip.GradientStops.Add(new GradientStop(ToColor(p.BrandStripMiddle), 0.55));
+            strip.GradientStops.Add(new GradientStop(ToColor(p.BrandStripEnd), 1));
+            strip.Freeze();
+            Resources["BrandStripBrush"] = strip;
+
+            // Status lamp glows follow the Git-state colours.
+            SetGlow("SuccessGlowEffect", p.Success, 8, 0.8);
+            SetGlow("AheadGlowEffect", p.RepoAhead, 8, 0.8);
+            SetGlow("InfoGlowEffect", p.Info, 8, 0.8);
+            SetGlow("CautionGlowEffect", p.Caution, 8, 0.8);
+            SetGlow("CriticalGlowEffect", p.Critical, 9, 0.9);
+            SetGlow("CriticalSoftGlowEffect", p.Critical, 8, 0.75);
+
+            // Accent comes from the theme, or the OS when the user prefers it.
             ApplyAccentFromSystem();
 
             // Override WPF SystemColors so any control template that uses them
@@ -196,36 +187,54 @@ namespace ControlTower.Desktop
             }
         }
 
+        /// <summary>
+        /// Applies and persists the per-mode theme choice from Settings ▸
+        /// Appearance. Takes effect immediately.
+        /// </summary>
+        public void SetThemeSelection(ThemeSelection selection)
+        {
+            if (selection == null || selection == _themeSelection)
+            {
+                return;
+            }
+
+            _themeSelection = selection;
+            ApplyTheme(IsDarkMode);
+            _themeSelections.Write(selection);
+            AppLogger.Info("appearance", "Theme selection set to dark=" + selection.DarkThemeId
+                + ", light=" + selection.LightThemeId + ", distinct-git-states=" + selection.KeepGitStatesDistinct + ".");
+        }
         // UI refresh: the "Tower" look pins a cyan brand accent to match the
         // approved mockup. The choice is now a persisted user setting
         // (Settings ▸ Appearance) read into _accentPreference at startup;
         // TowerCyan keeps the brand accent, WindowsAccent follows the OS.
         private void ApplyAccentFromSystem()
         {
-            Color accent;
-            if (_accentPreference == AccentPreference.TowerCyan)
-            {
-                accent = IsDarkMode
-                    ? (Color)ColorConverter.ConvertFromString("#4CC2FF")
-                    : (Color)ColorConverter.ConvertFromString("#0E7AB8");
-            }
-            else
+            // TowerCyan means "the theme's own accent" (cyan for the built-ins).
+            var accentTheme = _palette.Accent;
+            var accentForegroundTheme = _palette.AccentForeground;
+            if (_accentPreference == AccentPreference.WindowsAccent)
             {
                 var osAccent = SystemAccentReader.TryReadAccent();
                 if (osAccent.HasValue)
                 {
-                    accent = osAccent.Value;
+                    accentTheme = new ThemeColor(osAccent.Value.R, osAccent.Value.G, osAccent.Value.B);
                 }
                 else
                 {
                     // Brand fallback matches the previous hardcoded values.
-                    accent = IsDarkMode
-                        ? (Color)ColorConverter.ConvertFromString("#5AA6FF")
-                        : (Color)ColorConverter.ConvertFromString("#0F6CBD");
+                    accentTheme = ThemeColor.Parse(IsDarkMode ? "#5AA6FF" : "#0F6CBD");
                 }
+                // The OS accent can be light or dark, so pick readable text for it.
+                accentForegroundTheme = ThemeResolver.ForegroundFor(accentTheme, _palette.WindowBackground, _palette.PrimaryText);
             }
 
-            var hover = Shift(accent, IsDarkMode ? +24 : -24);
+            var accent = ToColor(accentTheme);
+            var accentForegroundBrush = new SolidColorBrush(ToColor(accentForegroundTheme));
+            accentForegroundBrush.Freeze();
+            Resources["AccentForegroundBrush"] = accentForegroundBrush;
+
+            var hover = ToColor(ThemeResolver.AccentHover(accentTheme, accentForegroundTheme));
             var light1 = Shift(accent, +20);
             var light2 = Shift(accent, +40);
             var dark1 = Shift(accent, -20);
@@ -295,9 +304,24 @@ namespace ControlTower.Desktop
             Resources[SystemColors.GrayTextBrushKey] = (SolidColorBrush)Resources["SecondaryTextBrush"];
         }
 
-        private void SetBrush(string resourceKey, string colorHex)
+        private void SetBrush(string resourceKey, ThemeColor color)
         {
-            Resources[resourceKey] = new SolidColorBrush((Color)ColorConverter.ConvertFromString(colorHex));
+            Resources[resourceKey] = new SolidColorBrush(ToColor(color));
         }
+
+        private void SetGlow(string resourceKey, ThemeColor color, double blurRadius, double opacity)
+        {
+            var effect = new DropShadowEffect
+            {
+                Color = ToColor(color),
+                BlurRadius = blurRadius,
+                ShadowDepth = 0,
+                Opacity = opacity
+            };
+            effect.Freeze();
+            Resources[resourceKey] = effect;
+        }
+
+        private static Color ToColor(ThemeColor color) => Color.FromRgb(color.R, color.G, color.B);
     }
 }

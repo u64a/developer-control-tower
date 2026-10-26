@@ -8,6 +8,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using ControlTower.Core.Appearance;
 using ControlTower.Core.Contracts;
 using ControlTower.Core.Models;
 using ControlTower.Desktop.Bootstrap;
@@ -90,10 +91,14 @@ namespace ControlTower.Desktop
             LibraryPathTextBox.Text = libraryPath ?? string.Empty;
             LogFolderText.Text = AppLogger.LogFolder;
 
-            // Hydrate the Appearance section from the live accent preference.
+            // Hydrate the Appearance section from the live theme and accent preferences.
             _loadingAppearance = true;
+            var app = Application.Current as App;
+            var themeSelection = app?.ThemeSelection ?? ThemeSelection.Default;
+            DistinctGitStatesCheckBox.IsChecked = themeSelection.KeepGitStatesDistinct;
+            LoadThemeOptions(themeSelection);
             AccentCombo.SelectedIndex =
-                (Application.Current as App)?.AccentPreference == AccentPreference.WindowsAccent ? 1 : 0;
+                app?.AccentPreference == AccentPreference.WindowsAccent ? 1 : 0;
             _loadingAppearance = false;
 
             // Hydrate the Updates section from the bound UpdateOptions.
@@ -164,6 +169,39 @@ namespace ControlTower.Desktop
                 ? AccentPreference.WindowsAccent
                 : AccentPreference.TowerCyan;
             (Application.Current as App)?.SetAccentPreference(preference);
+        }
+
+        private void LoadThemeOptions(ThemeSelection selection)
+        {
+            var distinct = selection.KeepGitStatesDistinct;
+            var darkOptions = ThemeOption.ForMode(ThemeVariant.Dark, distinct);
+            var lightOptions = ThemeOption.ForMode(ThemeVariant.Light, distinct);
+            DarkThemeCombo.ItemsSource = darkOptions;
+            LightThemeCombo.ItemsSource = lightOptions;
+            DarkThemeCombo.SelectedItem = darkOptions.FirstOrDefault(o => o.Id == selection.DarkThemeId) ?? darkOptions[0];
+            LightThemeCombo.SelectedItem = lightOptions.FirstOrDefault(o => o.Id == selection.LightThemeId) ?? lightOptions[0];
+        }
+
+        private void ThemeSelectionChanged(object sender, RoutedEventArgs e)
+        {
+            if (_loadingAppearance || Application.Current is not App app)
+            {
+                return;
+            }
+
+            var selection = new ThemeSelection(
+                (DarkThemeCombo.SelectedItem as ThemeOption)?.Id ?? ThemeCatalog.DefaultDarkId,
+                (LightThemeCombo.SelectedItem as ThemeOption)?.Id ?? ThemeCatalog.DefaultLightId,
+                DistinctGitStatesCheckBox.IsChecked == true);
+            app.SetThemeSelection(selection);
+
+            if (sender == DistinctGitStatesCheckBox)
+            {
+                // Swatches preview the Git-state colours, so refresh them.
+                _loadingAppearance = true;
+                LoadThemeOptions(selection);
+                _loadingAppearance = false;
+            }
         }
 
         private void RestoreFromGitClick(object sender, RoutedEventArgs e)

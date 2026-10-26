@@ -25,7 +25,7 @@
     </Window.Resources>
     <DockPanel>
     <controls:WindowTitleBar DockPanel.Dock="Top" ShowLauncherChip="True" />
-    <Border DockPanel.Dock="Top" Height="3" Background="{StaticResource BrandStripBrush}" />
+    <Border DockPanel.Dock="Top" Height="3" Background="{DynamicResource BrandStripBrush}" />
     <Grid Margin="16,14,16,16">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />

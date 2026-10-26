@@ -27,7 +27,8 @@ the right work surface without becoming another planning system.
 - Supports project registration, grouping, relocation, restore, and discovery.
 - Uses user-named Workspace Profiles to scope one synced portfolio per device.
 - Maintains a portable reusable-asset library with explicit push and pull.
-- Follows light or dark mode, with a selectable accent colour.
+- Follows light or dark mode, with a selectable theme for each mode (including
+  palettes adapted from Omarchy) and a selectable accent colour.
 - Stores SSH passwords and trusted fingerprints in Windows Credential Manager.
 
 It does **not** provide sprint tracking, estimates, capacity planning,

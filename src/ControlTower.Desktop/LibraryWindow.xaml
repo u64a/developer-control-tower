@@ -14,7 +14,7 @@
         Foreground="{DynamicResource PrimaryTextBrush}">
     <DockPanel>
     <controls:WindowTitleBar DockPanel.Dock="Top" />
-    <Border DockPanel.Dock="Top" Height="3" Background="{StaticResource BrandStripBrush}" />
+    <Border DockPanel.Dock="Top" Height="3" Background="{DynamicResource BrandStripBrush}" />
     <Grid Margin="16">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />

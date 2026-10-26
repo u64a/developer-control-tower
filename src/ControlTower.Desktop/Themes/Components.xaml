@@ -67,59 +67,31 @@
         <Style.Triggers>
             <DataTrigger Binding="{Binding RepoState}" Value="Clean">
                 <Setter Property="Fill" Value="{DynamicResource SuccessBrush}" />
-                <Setter Property="Effect">
-                    <Setter.Value>
-                        <DropShadowEffect Color="#7BD97B" BlurRadius="8" ShadowDepth="0" Opacity="0.8" />
-                    </Setter.Value>
-                </Setter>
+                <Setter Property="Effect" Value="{DynamicResource SuccessGlowEffect}" />
             </DataTrigger>
             <DataTrigger Binding="{Binding RepoState}" Value="Ahead">
                 <Setter Property="Fill" Value="{DynamicResource RepoAheadBrush}" />
-                <Setter Property="Effect">
-                    <Setter.Value>
-                        <DropShadowEffect Color="#45C7B8" BlurRadius="8" ShadowDepth="0" Opacity="0.8" />
-                    </Setter.Value>
-                </Setter>
+                <Setter Property="Effect" Value="{DynamicResource AheadGlowEffect}" />
             </DataTrigger>
             <DataTrigger Binding="{Binding RepoState}" Value="Behind">
                 <Setter Property="Fill" Value="{DynamicResource InfoBrush}" />
-                <Setter Property="Effect">
-                    <Setter.Value>
-                        <DropShadowEffect Color="#5AA6FF" BlurRadius="8" ShadowDepth="0" Opacity="0.8" />
-                    </Setter.Value>
-                </Setter>
+                <Setter Property="Effect" Value="{DynamicResource InfoGlowEffect}" />
             </DataTrigger>
             <DataTrigger Binding="{Binding RepoState}" Value="Diverged">
                 <Setter Property="Fill" Value="{DynamicResource CautionBrush}" />
-                <Setter Property="Effect">
-                    <Setter.Value>
-                        <DropShadowEffect Color="#FFB26B" BlurRadius="8" ShadowDepth="0" Opacity="0.8" />
-                    </Setter.Value>
-                </Setter>
+                <Setter Property="Effect" Value="{DynamicResource CautionGlowEffect}" />
             </DataTrigger>
             <DataTrigger Binding="{Binding RepoState}" Value="Uncommitted">
                 <Setter Property="Fill" Value="{DynamicResource CautionBrush}" />
-                <Setter Property="Effect">
-                    <Setter.Value>
-                        <DropShadowEffect Color="#FFB26B" BlurRadius="8" ShadowDepth="0" Opacity="0.8" />
-                    </Setter.Value>
-                </Setter>
+                <Setter Property="Effect" Value="{DynamicResource CautionGlowEffect}" />
             </DataTrigger>
             <DataTrigger Binding="{Binding RepoState}" Value="Attention">
                 <Setter Property="Fill" Value="{DynamicResource CriticalBrush}" />
-                <Setter Property="Effect">
-                    <Setter.Value>
-                        <DropShadowEffect Color="#FF6E6E" BlurRadius="9" ShadowDepth="0" Opacity="0.9" />
-                    </Setter.Value>
-                </Setter>
+                <Setter Property="Effect" Value="{DynamicResource CriticalGlowEffect}" />
             </DataTrigger>
             <DataTrigger Binding="{Binding RepoState}" Value="Unavailable">
                 <Setter Property="Fill" Value="{DynamicResource CriticalBrush}" />
-                <Setter Property="Effect">
-                    <Setter.Value>
-                        <DropShadowEffect Color="#FF6E6E" BlurRadius="8" ShadowDepth="0" Opacity="0.75" />
-                    </Setter.Value>
-                </Setter>
+                <Setter Property="Effect" Value="{DynamicResource CriticalSoftGlowEffect}" />
             </DataTrigger>
             <DataTrigger Binding="{Binding RepoState}" Value="HostedOnly">
                 <Setter Property="Fill" Value="{DynamicResource NeutralBrush}" />
