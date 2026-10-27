@@ -280,6 +280,10 @@ namespace ControlTower.Desktop.ViewModels
                     ? 1
                     : 0;
                 RaiseCopilotPropertyChanged();
+                foreach (var name in VsCodeMaintenanceProperties)
+                {
+                    OnPropertyChanged(name);
+                }
                 if (_selectedProject != null)
                 {
                     // M-01: selection no longer auto-triggers a refresh.
@@ -577,6 +581,10 @@ namespace ControlTower.Desktop.ViewModels
                 OnPropertyChanged("OpenCodeLabel");
                 OnPropertyChanged("CanOpenCodeNormal");
                 OnPropertyChanged("OpenCodeDisabledTooltip");
+                foreach (var name in VsCodeMaintenanceProperties)
+                {
+                    OnPropertyChanged(name);
+                }
             }
         }
 
@@ -630,6 +638,11 @@ namespace ControlTower.Desktop.ViewModels
         /// <summary>One-off launch in a specific environment without changing the project's setting.</summary>
         public void LaunchWith(ProjectOverview project, string environmentId)
         {
+            LaunchWithAsync(project, environmentId);
+        }
+
+        private async void LaunchWithAsync(ProjectOverview project, string environmentId)
+        {
             if (project == null)
             {
                 StatusMessage = "No project";
@@ -637,10 +650,7 @@ namespace ControlTower.Desktop.ViewModels
             }
 
             var projectRef = new ProjectRef { Id = project.Id, Path = project.SourcePath };
-            var result = _service.Launch(projectRef, LaunchTargetKind.Code, environmentId);
-            StatusMessage = (!result.Success && result.Issue != null && !string.IsNullOrWhiteSpace(result.Issue.Code))
-                ? "[" + result.Issue.Code + "] " + result.Message
-                : result.Message;
+            await LaunchAsync(projectRef, LaunchTargetKind.Code, environmentId);
         }
 
         /// <summary>
@@ -686,11 +696,60 @@ namespace ControlTower.Desktop.ViewModels
             "CopilotSectionVisible"
         };
 
+        private static readonly string[] VsCodeMaintenanceProperties =
+        {
+            "VsCodeMaintenanceVisible", "UpdateVsCodeBeforeOpening", "UpdateVsCodeExtensionsBeforeOpening"
+        };
+
         private int _copilotAgentModeIndex;
 
         private CopilotAutostart Autostart
         {
             get { return SelectedProject == null ? null : SelectedProject.CopilotAutostart; }
+        }
+
+        private VsCodeMaintenance VsCodeMaintenance
+        {
+            get { return SelectedProject == null ? null : SelectedProject.VsCodeMaintenance; }
+        }
+
+        /// <summary>Maintenance is only meaningful for an actual local VS Code launch.</summary>
+        public bool VsCodeMaintenanceVisible
+        {
+            get
+            {
+                var launch = SelectedLaunch;
+                return SelectedProject != null &&
+                       CanOpenCode &&
+                       launch != null &&
+                       string.Equals(launch.Id, LaunchEnvironmentCatalog.VsCodeId, StringComparison.Ordinal) &&
+                       string.Equals(
+                           Path.GetFileNameWithoutExtension((launch.Environment.Command ?? string.Empty).Trim().Trim('"')),
+                           "code",
+                           StringComparison.OrdinalIgnoreCase);
+            }
+        }
+
+        public bool UpdateVsCodeBeforeOpening
+        {
+            get { return VsCodeMaintenance != null && VsCodeMaintenance.UpdateVsCode; }
+            set
+            {
+                if (VsCodeMaintenance == null || VsCodeMaintenance.UpdateVsCode == value) return;
+                VsCodeMaintenance.UpdateVsCode = value;
+                PersistVsCodeMaintenance("VS Code update before opening " + (value ? "enabled" : "disabled") + " for " + SelectedProject.DisplayName);
+            }
+        }
+
+        public bool UpdateVsCodeExtensionsBeforeOpening
+        {
+            get { return VsCodeMaintenance != null && VsCodeMaintenance.UpdateExtensions; }
+            set
+            {
+                if (VsCodeMaintenance == null || VsCodeMaintenance.UpdateExtensions == value) return;
+                VsCodeMaintenance.UpdateExtensions = value;
+                PersistVsCodeMaintenance("VS Code extension update before opening " + (value ? "enabled" : "disabled") + " for " + SelectedProject.DisplayName);
+            }
         }
 
         /// <summary>
@@ -1040,6 +1099,25 @@ namespace ControlTower.Desktop.ViewModels
             {
                 OnPropertyChanged(name);
             }
+        }
+
+        private void PersistVsCodeMaintenance(string message)
+        {
+            foreach (var name in VsCodeMaintenanceProperties) OnPropertyChanged(name);
+            var project = SelectedProject;
+            if (project == null || project.VsCodeMaintenance == null) return;
+
+            var def = _service.GetProjectDefinition(new ProjectRef { Id = project.Id, Path = project.SourcePath });
+            if (def == null)
+            {
+                StatusMessage = "Could not load project to update.";
+                return;
+            }
+
+            var request = BuildRequestFromDefinition(def, project.SourcePath);
+            request.VsCodeMaintenance = project.VsCodeMaintenance.Clone();
+            var result = _service.RegisterProject(request);
+            StatusMessage = result.Success ? message : result.Message;
         }
 
         public bool CanOpenRemote
@@ -2307,7 +2385,7 @@ namespace ControlTower.Desktop.ViewModels
             }
         }
 
-        private void Launch(ProjectOverview project, LaunchTargetKind kind)
+        private async void Launch(ProjectOverview project, LaunchTargetKind kind)
         {
             if (project == null)
             {
@@ -2315,11 +2393,7 @@ namespace ControlTower.Desktop.ViewModels
                 return;
             }
 
-            var projectRef = new ProjectRef { Id = project.Id, Path = project.SourcePath };
-            var result = _service.Launch(projectRef, kind);
-            StatusMessage = (!result.Success && result.Issue != null && !string.IsNullOrWhiteSpace(result.Issue.Code))
-                ? "[" + result.Issue.Code + "] " + result.Message
-                : result.Message;
+            await LaunchAsync(new ProjectRef { Id = project.Id, Path = project.SourcePath }, kind, null);
         }
 
         private static bool RowHasLocal(ProjectOverview p)
@@ -2334,7 +2408,7 @@ namespace ControlTower.Desktop.ViewModels
                    !string.Equals(p.SshTarget, "Not configured", StringComparison.OrdinalIgnoreCase);
         }
 
-        private void Launch(LaunchTargetKind kind)
+        private async void Launch(LaunchTargetKind kind)
         {
             var projectRef = GetSelectedRef();
             if (projectRef == null)
@@ -2343,16 +2417,42 @@ namespace ControlTower.Desktop.ViewModels
                 return;
             }
 
-            var result = _service.Launch(projectRef, kind);
-            if (!result.Success && result.Issue != null && !string.IsNullOrWhiteSpace(result.Issue.Code))
+            await LaunchAsync(projectRef, kind, null);
+        }
+
+        private async Task LaunchAsync(ProjectRef projectRef, LaunchTargetKind kind, string environmentOverride)
+        {
+            if (IsBusy)
             {
-                // Show structured code + message verbatim per ADR-004 so the
-                // user sees exactly why a launch was rejected.
-                StatusMessage = "[" + result.Issue.Code + "] " + result.Message;
+                StatusMessage = "A launch is already in progress.";
+                return;
             }
-            else
+
+            IsBusy = true;
+            StatusMessage = "Opening project...";
+            try
             {
-                StatusMessage = result.Message;
+                var result = await Task.Run(() => environmentOverride == null
+                    ? _service.Launch(projectRef, kind)
+                    : _service.Launch(projectRef, kind, environmentOverride));
+                if (!result.Success && result.Issue != null && !string.IsNullOrWhiteSpace(result.Issue.Code))
+                {
+                    // Show structured code + message verbatim per ADR-004 so the
+                    // user sees exactly why a launch was rejected.
+                    StatusMessage = "[" + result.Issue.Code + "] " + result.Message;
+                }
+                else
+                {
+                    StatusMessage = result.Message;
+                }
+            }
+            catch (Exception ex)
+            {
+                StatusMessage = "Could not open project: " + ex.Message;
+            }
+            finally
+            {
+                IsBusy = false;
             }
         }
 

@@ -85,6 +85,7 @@ namespace ControlTower.Core.Models
             ExternalSystemSummary = string.Empty;
             OriginUrl = string.Empty;
             RepoState = RepoState.Unknown;
+            VsCodeMaintenance = new VsCodeMaintenance();
         }
 
         public string Id { get; set; }
@@ -191,6 +192,8 @@ namespace ControlTower.Core.Models
 
         /// <summary>Project's configured launch environment id (empty = global default).</summary>
         public string LaunchEnvironment { get; set; } = string.Empty;
+
+        public VsCodeMaintenance VsCodeMaintenance { get; set; }
 
         /// <summary>Project's Copilot CLI autostart options.</summary>
         public CopilotAutostart CopilotAutostart { get; set; } = new CopilotAutostart();

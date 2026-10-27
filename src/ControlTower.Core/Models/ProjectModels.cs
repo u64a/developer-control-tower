@@ -94,6 +94,7 @@ namespace ControlTower.Core.Models
             GitHub = string.Empty;
             Ado = string.Empty;
             CopilotAutostart = new CopilotAutostart();
+            VsCodeMaintenance = new VsCodeMaintenance();
         }
 
         public string VsCodeLocal { get; set; }
@@ -109,6 +110,9 @@ namespace ControlTower.Core.Models
 
         /// <summary>Copilot CLI session started alongside (or as) this project's launch.</summary>
         public CopilotAutostart CopilotAutostart { get; set; }
+
+        /// <summary>Optional local VS Code maintenance performed immediately before a safe editor launch.</summary>
+        public VsCodeMaintenance VsCodeMaintenance { get; set; }
     }
 
     public sealed class DocLink
@@ -225,6 +229,12 @@ namespace ControlTower.Core.Models
         /// value on overwrite; a value replaces it.
         /// </summary>
         public CopilotAutostart CopilotAutostart { get; set; }
+
+        /// <summary>
+        /// VS Code maintenance options. <c>null</c> preserves the existing
+        /// value on overwrite; a value replaces it.
+        /// </summary>
+        public VsCodeMaintenance VsCodeMaintenance { get; set; }
 
         /// <summary>
         /// Neutral remote URL slot used by the scan-and-register flow.
