@@ -4,6 +4,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Text.RegularExpressions;
+using System.Threading;
 using ControlTower.Core.Contracts;
 using ControlTower.Core.Models;
 using ControlTower.Infrastructure.Configuration;
@@ -14,6 +15,8 @@ namespace ControlTower.Infrastructure.Launch
     {
         private readonly ToolSettings _settings;
         private readonly Action<ProcessStartInfo> _processStarter;
+        private readonly IVsCodePreLaunchMaintenance _vsCodeMaintenance;
+        private static readonly SemaphoreSlim LocalCodeLaunchGate = new SemaphoreSlim(1, 1);
 
         public WindowsLaunchService()
             : this(new ToolSettings(), null)
@@ -28,9 +31,19 @@ namespace ControlTower.Infrastructure.Launch
         // Test seam: a custom starter lets tests verify the validated start-info
         // without actually invoking ShellExecute. Default starts the real process.
         public WindowsLaunchService(ToolSettings settings, Action<ProcessStartInfo> processStarter)
+            : this(settings, processStarter, null)
+        {
+        }
+
+        /// <summary>Test seam for safe pre-launch VS Code maintenance.</summary>
+        public WindowsLaunchService(
+            ToolSettings settings,
+            Action<ProcessStartInfo> processStarter,
+            IVsCodePreLaunchMaintenance vsCodeMaintenance)
         {
             _settings = settings ?? new ToolSettings();
             _processStarter = processStarter ?? (info => Process.Start(info));
+            _vsCodeMaintenance = vsCodeMaintenance ?? new VsCodePreLaunchMaintenance();
         }
 
         public LaunchResult Launch(ProjectDefinition project, LaunchTargetKind targetKind)
@@ -50,32 +63,60 @@ namespace ControlTower.Infrastructure.Launch
                         return LaunchTerminal(project, environment);
                     }
 
-                    // The task file has to exist before the folder opens, so
-                    // prepare it ahead of starting the editor.
-                    var integrated = PrepareIntegratedCopilot(project, out var integratedNote);
-                    var editorResult = LaunchLocalCode(project, environment);
-                    if (!editorResult.Success)
+                    LocalCodeLaunchGate.Wait();
+                    try
                     {
-                        return editorResult;
-                    }
+                        var maintenanceNote = RunVsCodeMaintenance(project, environment);
+                        if (!maintenanceNote.CanLaunch)
+                        {
+                            return LaunchResult.Failed(maintenanceNote.Message);
+                        }
 
-                    return integrated
-                        ? LaunchResult.Ok(editorResult.Message + integratedNote)
-                        : StartCompanionCopilot(project, editorResult);
+                        // The task file has to exist before the folder opens, so
+                        // prepare it ahead of starting the editor.
+                        var integrated = PrepareIntegratedCopilot(project, out var integratedNote);
+                        var editorResult = LaunchLocalCode(project, environment);
+                        if (!editorResult.Success)
+                        {
+                            return editorResult;
+                        }
+
+                        var launchResult = integrated
+                            ? LaunchResult.Ok(editorResult.Message + integratedNote)
+                            : StartCompanionCopilot(project, editorResult);
+                        return string.IsNullOrWhiteSpace(maintenanceNote.Message)
+                            ? launchResult
+                            : LaunchResult.Ok(maintenanceNote.Message + " " + launchResult.Message);
+                    }
+                    finally
+                    {
+                        LocalCodeLaunchGate.Release();
+                    }
                 }
 
                 if (targetKind == LaunchTargetKind.CodeAdmin)
                 {
-                    var integratedAdmin = PrepareIntegratedCopilot(project, out var adminNote);
-                    var adminResult = LaunchLocalCodeAsAdmin(project);
-                    if (!adminResult.Success)
+                    LocalCodeLaunchGate.Wait();
+                    try
                     {
-                        return adminResult;
-                    }
+                        var integratedAdmin = PrepareIntegratedCopilot(project, out var adminNote);
+                        var adminResult = LaunchLocalCodeAsAdmin(project);
+                        if (!adminResult.Success)
+                        {
+                            return adminResult;
+                        }
 
-                    return integratedAdmin
-                        ? LaunchResult.Ok(adminResult.Message + adminNote)
-                        : StartCompanionCopilot(project, adminResult);
+                        var adminLaunch = integratedAdmin
+                            ? LaunchResult.Ok(adminResult.Message + adminNote)
+                            : StartCompanionCopilot(project, adminResult);
+                        return project.Launch?.VsCodeMaintenance == null || project.Launch.VsCodeMaintenance.IsDefault
+                            ? adminLaunch
+                            : LaunchResult.Ok("VS Code pre-launch updates are skipped for Administrator launches. " + adminLaunch.Message);
+                    }
+                    finally
+                    {
+                        LocalCodeLaunchGate.Release();
+                    }
                 }
 
                 if (targetKind == LaunchTargetKind.RemoteCode)
@@ -139,6 +180,28 @@ namespace ControlTower.Infrastructure.Launch
         {
             var catalog = _settings.LaunchEnvironments ?? LaunchEnvironmentCatalog.CreateDefault(_settings.VsCodeCommand);
             return catalog.Resolve(project.Launch?.Environment);
+        }
+
+        private VsCodeMaintenanceResult RunVsCodeMaintenance(ProjectDefinition project, LaunchEnvironment environment)
+        {
+            // These options are intentionally unavailable for custom editors,
+            // terminal environments, Remote SSH, and a project without a local
+            // workspace. Only the built-in local VS Code route is maintainable.
+            if (environment == null ||
+                !string.Equals(environment.Id, LaunchEnvironmentCatalog.VsCodeId, StringComparison.Ordinal) ||
+                !IsVsCodeCommand(_settings.VsCodeCommand) ||
+                ResolveLocalCodePath(project) == null)
+            {
+                return new VsCodeMaintenanceResult(true, string.Empty);
+            }
+
+            return _vsCodeMaintenance.Run(project.Launch?.VsCodeMaintenance, _settings.VsCodeCommand);
+        }
+
+        private static bool IsVsCodeCommand(string command)
+        {
+            var fileName = Path.GetFileNameWithoutExtension((command ?? string.Empty).Trim().Trim('"'));
+            return string.Equals(fileName, "code", StringComparison.OrdinalIgnoreCase);
         }
 
         /// <summary>The environment Copilot CLI autostart runs as, honouring a user override of the built-in.</summary>
@@ -272,6 +335,13 @@ namespace ControlTower.Infrastructure.Launch
             if (!string.IsNullOrWhiteSpace(path) && Directory.Exists(path))
             {
                 return path;
+            }
+
+            // LaunchLocalCode chooses Remote-SSH before ProjectRootPath. Do not
+            // treat portfolio metadata as a local workspace in that case.
+            if (!string.IsNullOrWhiteSpace(project.Locations?.SshTarget))
+            {
+                return null;
             }
 
             return !string.IsNullOrWhiteSpace(project.ProjectRootPath) && Directory.Exists(project.ProjectRootPath)

@@ -96,6 +96,9 @@ namespace ControlTower.Infrastructure.Yaml.Dto
 
         [YamlMember(Alias = "copilot_autostart")]
         public CopilotAutostartDto CopilotAutostart { get; set; }
+
+        [YamlMember(Alias = "vscode_maintenance")]
+        public VsCodeMaintenanceDto VsCodeMaintenance { get; set; }
     }
 
     public sealed class CopilotAutostartDto
@@ -123,6 +126,15 @@ namespace ControlTower.Infrastructure.Yaml.Dto
 
         [YamlMember(Alias = "integrated_terminal")]
         public bool IntegratedTerminal { get; set; }
+    }
+
+    public sealed class VsCodeMaintenanceDto
+    {
+        [YamlMember(Alias = "update_vscode")]
+        public bool UpdateVsCode { get; set; }
+
+        [YamlMember(Alias = "update_extensions")]
+        public bool UpdateExtensions { get; set; }
     }
 
     public sealed class DocLinkDto

@@ -213,6 +213,25 @@ namespace ControlTower.Infrastructure.Yaml
                             UseIntegratedTerminal = autostart.IntegratedTerminal
                         };
                     }
+
+                    if (dto.Launch.VsCodeMaintenance != null)
+                    {
+                        if (metadataIsInRepo)
+                        {
+                            result.Issues.Add(new ValidationIssue(
+                                IssueSeverity.Warning,
+                                "project/vscode-maintenance/untrusted",
+                                "launch.vscode_maintenance was ignored because it comes from the repository; machine updates require centrally stored project metadata."));
+                        }
+                        else
+                        {
+                            project.Launch.VsCodeMaintenance = new VsCodeMaintenance
+                            {
+                                UpdateVsCode = dto.Launch.VsCodeMaintenance.UpdateVsCode,
+                                UpdateExtensions = dto.Launch.VsCodeMaintenance.UpdateExtensions
+                            };
+                        }
+                    }
                 }
 
                 if (dto.Docs != null)

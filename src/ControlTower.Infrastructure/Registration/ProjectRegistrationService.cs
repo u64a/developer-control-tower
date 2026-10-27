@@ -432,6 +432,14 @@ namespace ControlTower.Infrastructure.Registration
                 lines.Add("    integrated_terminal: " + (autostart.UseIntegratedTerminal ? "true" : "false"));
             }
 
+            var maintenance = request.VsCodeMaintenance ?? existingProject?.Launch?.VsCodeMaintenance;
+            if (maintenance != null && !maintenance.IsDefault)
+            {
+                lines.Add("  vscode_maintenance:");
+                lines.Add("    update_vscode: " + (maintenance.UpdateVsCode ? "true" : "false"));
+                lines.Add("    update_extensions: " + (maintenance.UpdateExtensions ? "true" : "false"));
+            }
+
             lines.Add(string.Empty);
             AppendDocs(lines, existingProject);
             AppendExternalRefs(lines, existingProject);

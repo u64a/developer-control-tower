@@ -515,6 +515,20 @@
                             </StackPanel>
                         </Button>
 
+                        <StackPanel Visibility="{Binding VsCodeMaintenanceVisible, Converter={StaticResource BoolToVis}}">
+                            <Separator Margin="0,10,0,8" Opacity="0.35" />
+                            <CheckBox IsChecked="{Binding UpdateVsCodeBeforeOpening, Mode=TwoWay}"
+                                      Content="Update VS Code before opening"
+                                      AutomationProperties.Name="Update VS Code before opening"
+                                      ToolTip="Saved per project. Updates only a safe, official per-user stable VS Code install when no VS Code process is running."
+                                      Margin="0,0,0,2" />
+                            <CheckBox IsChecked="{Binding UpdateVsCodeExtensionsBeforeOpening, Mode=TwoWay}"
+                                      Content="Update VS Code extensions before opening"
+                                      AutomationProperties.Name="Update VS Code extensions before opening"
+                                      ToolTip="Saved per project. Runs code --update-extensions before opening only when no VS Code process is running."
+                                      Margin="0,0,0,2" />
+                        </StackPanel>
+
                         <StackPanel Visibility="{Binding CopilotSectionVisible, Converter={StaticResource BoolToVis}}">
                         <Separator Margin="0,10,0,8" Opacity="0.35" />
 

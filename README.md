@@ -52,6 +52,14 @@ Set the default under **Settings → Launch environment**. To override it for
 one project, right-click that project's row and choose **Launch environment**.
 Each row's launch button shows the icon of the tool that will open.
 
+For a local project using the built-in VS Code environment, two optional
+per-project checkboxes appear above the Copilot option. They can update the
+official per-user stable VS Code install and/or extensions before the editor
+opens. Both default off. Updates are skipped (while the project still opens)
+when any VS Code, Insiders, or Code tunnel process is already present; remote,
+terminal, Copilot, Claude, custom-editor, and Administrator launches never
+perform this maintenance.
+
 For SSH projects, terminal environments connect with your SSH configuration
 and keys, then start the tool in the remote folder. Remote paths are
 validated before they reach the remote shell. Product icons are read from the

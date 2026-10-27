@@ -45,6 +45,7 @@ namespace ControlTower.Core.Composition
             overview.VsCodePath = project.Launch == null ? string.Empty : project.Launch.VsCodeLocal;
             overview.LaunchEnvironment = project.Launch == null ? string.Empty : project.Launch.Environment ?? string.Empty;
             overview.CopilotAutostart = project.Launch?.CopilotAutostart?.Clone() ?? new CopilotAutostart();
+            overview.VsCodeMaintenance = project.Launch?.VsCodeMaintenance?.Clone() ?? new VsCodeMaintenance();
             overview.PrimaryDocPath = ResolvePrimaryDoc(project);
             overview.PlanningPath = ResolvePlanningPath(project);
             overview.PlanningAuthorityNote = BuildPlanningAuthorityNote(project);
