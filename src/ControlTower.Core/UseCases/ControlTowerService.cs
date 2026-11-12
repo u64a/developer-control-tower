@@ -242,6 +242,60 @@ namespace ControlTower.Core.UseCases
             return snapshot;
         }
 
+        /// <summary>
+        /// Copies origins seen by repo scans into the portfolio's
+        /// <c>remote_url</c> cache for entries that have none. The snapshot
+        /// store is per-machine and does not survive a rebuild; portfolio.yml
+        /// does, and it is what Restore from Git clones from. Only fills
+        /// blanks and never stores a credential-bearing URL. Best-effort:
+        /// returns the number of entries updated, 0 on any failure.
+        /// </summary>
+        public int RememberScannedOrigins()
+        {
+            try
+            {
+                var portfolio = _portfolioProvider.LoadPortfolio();
+                if (portfolio?.Projects == null) return 0;
+
+                // Saving rewrites the file from the in-memory model, so never
+                // save one that did not load cleanly.
+                if (portfolio.Issues != null)
+                {
+                    foreach (var issue in portfolio.Issues)
+                    {
+                        if (issue != null && issue.Severity == IssueSeverity.Error) return 0;
+                    }
+                }
+
+                var updated = 0;
+                foreach (var projectRef in portfolio.Projects)
+                {
+                    if (projectRef == null || string.IsNullOrWhiteSpace(projectRef.Id)) continue;
+                    if (!string.IsNullOrWhiteSpace(projectRef.RemoteUrl)) continue;
+
+                    var snapshot = _snapshotStore.Load(projectRef.Id);
+                    if (snapshot == null || !snapshot.IsAvailable) continue;
+
+                    var origin = (snapshot.OriginUrl ?? string.Empty).Trim();
+                    if (!RestoreInputBuilder.LooksLikeCloneUrl(origin) || UrlSanitizer.HasCredentials(origin)) continue;
+
+                    projectRef.RemoteUrl = origin;
+                    updated++;
+                }
+
+                if (updated > 0)
+                {
+                    _portfolioProvider.SavePortfolio(portfolio);
+                }
+
+                return updated;
+            }
+            catch
+            {
+                return 0;
+            }
+        }
+
         public ProjectDefinition GetProjectDefinition(ProjectRef projectRef)
         {
             if (projectRef == null)

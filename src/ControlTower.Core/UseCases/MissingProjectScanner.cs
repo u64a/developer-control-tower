@@ -19,8 +19,9 @@ namespace ControlTower.Core.UseCases
     /// </summary>
     /// <remarks>
     /// SSH-store projects (<see cref="ProjectRestoreInput.IsLocalStore"/>
-    /// false) and projects with an empty <see cref="ProjectRestoreInput.RemoteUrl"/>
-    /// are filtered out before classification — they are not candidates.
+    /// false) are filtered out before classification. Projects with an
+    /// empty <see cref="ProjectRestoreInput.RemoteUrl"/> stay in the result
+    /// so the user can supply one.
     /// </remarks>
     public sealed class MissingProjectScanner : IMissingProjectScanner
     {
@@ -69,7 +70,7 @@ namespace ControlTower.Core.UseCases
                 {
                     return MakeCandidate(project, project.RemoteUrl, canonicalInputRemote,
                         RestoreClassification.MissingNeedsUrl,
-                        "Folder is missing and no remote URL is cached. Paste the origin URL below to enable clone.");
+                        "Folder is missing and no origin URL is recorded.");
                 }
 
                 return MakeCandidate(project, project.RemoteUrl, canonicalInputRemote,
@@ -84,7 +85,7 @@ namespace ControlTower.Core.UseCases
                 {
                     return MakeCandidate(project, project.RemoteUrl, canonicalInputRemote,
                         RestoreClassification.MissingNeedsUrl,
-                        "Folder is empty and no remote URL is cached. Paste the origin URL below to enable clone.");
+                        "Folder is empty and no origin URL is recorded.");
                 }
 
                 return MakeCandidate(project, project.RemoteUrl, canonicalInputRemote,
@@ -98,16 +99,14 @@ namespace ControlTower.Core.UseCases
             switch (classification)
             {
                 case NotARepo:
-                    if (string.IsNullOrWhiteSpace(project.RemoteUrl))
-                    {
-                        return MakeCandidate(project, project.RemoteUrl, canonicalInputRemote,
-                            RestoreClassification.MissingNeedsUrl,
-                            "Folder has content (not a git repo) and no remote URL is cached. Paste the origin URL below to enable Quarantine & clone.");
-                    }
-
+                    // Always a conflict, with or without a URL: cloning into
+                    // a non-empty folder can only fail, so the existing
+                    // content has to be quarantined first.
                     return MakeCandidate(project, project.RemoteUrl, canonicalInputRemote,
                         RestoreClassification.ConflictNonEmpty,
-                        "Folder has content but is not a git repository.");
+                        string.IsNullOrWhiteSpace(project.RemoteUrl)
+                            ? "Folder has files but is not a git repository; no origin URL is recorded."
+                            : "Folder has content but is not a git repository.");
 
                 case BareRepo:
                     return MakeCandidate(project, project.RemoteUrl, canonicalInputRemote,
@@ -119,9 +118,11 @@ namespace ControlTower.Core.UseCases
                         // Live git origin wins when present — it's the operational truth.
                         // Surface it as the candidate's RemoteUrl so the VM can persist
                         // any change back to portfolio.yml as a cache update.
-                        var liveRemote = string.IsNullOrWhiteSpace(working.OriginUrl)
-                            ? project.RemoteUrl
-                            : working.OriginUrl;
+                        var hasLiveOrigin = !string.IsNullOrWhiteSpace(working.OriginUrl);
+                        var liveRemote = hasLiveOrigin ? working.OriginUrl! : project.RemoteUrl;
+                        var liveSource = hasLiveOrigin
+                            ? RestoreUrlSource.LiveRepository
+                            : project.RemoteUrlSource;
                         var canonicalLiveRemote = string.IsNullOrWhiteSpace(liveRemote)
                             ? string.Empty
                             : _inspector.CanonicalizeRemote(liveRemote);
@@ -137,7 +138,7 @@ namespace ControlTower.Core.UseCases
                             if (working.HasSubmodules) reasons.Add("submodules");
                             return MakeCandidate(project, liveRemote, canonicalLiveRemote,
                                 RestoreClassification.UnsafeExisting,
-                                "Existing repo is " + string.Join("/", reasons) + " — will not overwrite.");
+                                "Existing repo is " + string.Join("/", reasons) + " — will not overwrite.", liveSource);
                         }
 
                         // Compare canonical input remote (if known) to the live origin
@@ -150,14 +151,14 @@ namespace ControlTower.Core.UseCases
                         {
                             return MakeCandidate(project, liveRemote, canonicalLiveRemote,
                                 RestoreClassification.AlreadyCloned,
-                                "Already cloned (origin matches).");
+                                "Already cloned (origin matches).", liveSource);
                         }
 
                         if (string.IsNullOrWhiteSpace(canonicalLiveRemote))
                         {
                             return MakeCandidate(project, liveRemote, canonicalLiveRemote,
                                 RestoreClassification.UnsafeExisting,
-                                "Existing repo has no origin — will not overwrite.");
+                                "Existing repo has no origin — will not overwrite.", liveSource);
                         }
 
                         if (string.IsNullOrWhiteSpace(canonicalInputRemote))
@@ -167,12 +168,12 @@ namespace ControlTower.Core.UseCases
                             // and let the VM persist the discovered origin to cache.
                             return MakeCandidate(project, liveRemote, canonicalLiveRemote,
                                 RestoreClassification.AlreadyCloned,
-                                "Already cloned. Origin URL will be cached for future restores.");
+                                "Already cloned. Origin URL will be cached for future restores.", liveSource);
                         }
 
                         return MakeCandidate(project, liveRemote, canonicalLiveRemote,
                             RestoreClassification.UnsafeExisting,
-                            "Existing repo has origin " + working.OriginUrl + " — will not overwrite.");
+                            "Existing repo has origin " + working.OriginUrl + " — will not overwrite.", liveSource);
                     }
 
                 default:
@@ -184,7 +185,8 @@ namespace ControlTower.Core.UseCases
 
         private static RestoreCandidate MakeCandidate(
             ProjectRestoreInput project, string remoteUrl, string canonicalRemote,
-            RestoreClassification classification, string detail)
+            RestoreClassification classification, string detail,
+            RestoreUrlSource? source = null)
         {
             return new RestoreCandidate(
                 ProjectId: project.ProjectId,
@@ -194,7 +196,10 @@ namespace ControlTower.Core.UseCases
                 RemoteUrl: remoteUrl ?? string.Empty,
                 CanonicalRemoteUrl: canonicalRemote ?? string.Empty,
                 Classification: classification,
-                Detail: detail);
+                Detail: detail,
+                RemoteUrlSource: string.IsNullOrWhiteSpace(remoteUrl)
+                    ? RestoreUrlSource.None
+                    : source ?? project.RemoteUrlSource);
         }
     }
 }

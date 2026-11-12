@@ -168,6 +168,46 @@ public class ControlTowerServiceTests
         return (svc, portfolio, projects, productMap, board, scanner, store, launch, reg, roadmap);
     }
 
+    // ---- RememberScannedOrigins -------------------------------------------
+
+    [Fact]
+    public void RememberScannedOrigins_FillsBlankEntriesFromUsableSnapshotsOnly()
+    {
+        var (svc, portfolio, _, _, _, _, store, _, _, _) = Build();
+        foreach (var id in new[] { "blank", "kept", "secret", "no-remote", "offline" })
+        {
+            portfolio.Index.Projects.Add(new ProjectRef { Id = id, Path = @"C:\repos\" + id });
+        }
+        portfolio.Index.Projects[1].RemoteUrl = "https://github.com/org/kept.git";
+        store.Saved["blank"] = new RepoSnapshot { IsAvailable = true, OriginUrl = "git@github.com:org/blank.git" };
+        store.Saved["kept"] = new RepoSnapshot { IsAvailable = true, OriginUrl = "https://github.com/fork/kept.git" };
+        store.Saved["secret"] = new RepoSnapshot { IsAvailable = true, OriginUrl = "https://user:token@github.com/org/secret.git" };
+        store.Saved["no-remote"] = new RepoSnapshot { IsAvailable = true, OriginUrl = "" };
+        store.Saved["offline"] = new RepoSnapshot { IsAvailable = false, OriginUrl = "https://github.com/org/offline.git" };
+
+        var updated = svc.RememberScannedOrigins();
+
+        Assert.Equal(1, updated);
+        var urls = portfolio.Index.Projects.ToDictionary(p => p.Id, p => p.RemoteUrl);
+        Assert.Equal("git@github.com:org/blank.git", urls["blank"]);
+        Assert.Equal("https://github.com/org/kept.git", urls["kept"]);
+        Assert.Equal(string.Empty, urls["secret"]);
+        Assert.Equal(string.Empty, urls["no-remote"]);
+        Assert.Equal(string.Empty, urls["offline"]);
+    }
+
+    [Fact]
+    public void RememberScannedOrigins_PortfolioWithLoadErrors_IsNeverRewritten()
+    {
+        var (svc, portfolio, _, _, _, _, store, _, _, _) = Build();
+        portfolio.Index.Projects.Add(new ProjectRef { Id = "blank", Path = @"C:\repos\blank" });
+        portfolio.Index.Issues.Add(new ValidationIssue(IssueSeverity.Error, "portfolio.yml contains malformed YAML"));
+        store.Saved["blank"] = new RepoSnapshot { IsAvailable = true, OriginUrl = "https://github.com/org/blank.git" };
+
+        Assert.Equal(0, svc.RememberScannedOrigins());
+        Assert.Equal(string.Empty, portfolio.Index.Projects[0].RemoteUrl);
+    }
+
     // ---- LoadPortfolio ----------------------------------------------------
 
     [Fact]

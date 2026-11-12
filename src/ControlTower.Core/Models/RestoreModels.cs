@@ -15,9 +15,9 @@ namespace ControlTower.Core.Models
         Missing,
 
         /// <summary>
-        /// Folder does not exist on disk AND no remote URL is known anywhere
-        /// (no cache, no project.yml). User must supply a URL inline before
-        /// the row can be selected for clone.
+        /// Folder is missing or empty AND no remote URL is known anywhere.
+        /// User must supply a URL inline before the row can be selected
+        /// for clone.
         /// </summary>
         MissingNeedsUrl,
 
@@ -26,7 +26,8 @@ namespace ControlTower.Core.Models
 
         /// <summary>
         /// Folder has content but no <c>.git</c> directory. Requires the
-        /// user to pick between Skip and Quarantine &amp; clone.
+        /// user to pick between Skip and Quarantine &amp; clone. The remote
+        /// URL may be empty, in which case the user must also supply one.
         /// </summary>
         ConflictNonEmpty,
 
@@ -82,6 +83,33 @@ namespace ControlTower.Core.Models
     }
 
     /// <summary>
+    /// Where a restore candidate's remote URL came from. Shown to the user
+    /// and used to decide whether the URL is trustworthy enough to cache.
+    /// </summary>
+    public enum RestoreUrlSource
+    {
+        None,
+
+        /// <summary><c>remote_url</c> cached on the portfolio.yml entry.</summary>
+        PortfolioCache,
+
+        /// <summary><c>locations.remote_url</c> in the project's central metadata.</summary>
+        ProjectMetadata,
+
+        /// <summary>Origin recorded by the last repository scan on this machine.</summary>
+        LastScan,
+
+        /// <summary>
+        /// The project's GitHub / Azure DevOps launch link. A best guess:
+        /// usually clonable, but never cached until a clone succeeds.
+        /// </summary>
+        LaunchLink,
+
+        /// <summary>Origin read from the live working tree.</summary>
+        LiveRepository,
+    }
+
+    /// <summary>
     /// Input fed into <see cref="Contracts.IMissingProjectScanner"/>.
     /// Callers (the WPF dialog VM) build one of these per project they
     /// want considered; non-local-store projects can be filtered up
@@ -93,7 +121,9 @@ namespace ControlTower.Core.Models
         string Slug,
         string ExpectedPath,
         string RemoteUrl,
-        bool IsLocalStore);
+        bool IsLocalStore,
+        RestoreUrlSource RemoteUrlSource = RestoreUrlSource.None,
+        string CachedRemoteUrl = "");
 
     /// <summary>
     /// A classified candidate produced by the scanner. Carries everything
@@ -108,7 +138,8 @@ namespace ControlTower.Core.Models
         string RemoteUrl,
         string CanonicalRemoteUrl,
         RestoreClassification Classification,
-        string Detail);
+        string Detail,
+        RestoreUrlSource RemoteUrlSource = RestoreUrlSource.None);
 
     /// <summary>User selection submitted to <see cref="Contracts.IRestoreOrchestrator"/>.</summary>
     public sealed record RestoreSelection(RestoreCandidate Candidate, RestoreAction Action);

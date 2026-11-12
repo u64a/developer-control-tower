@@ -169,7 +169,7 @@ public class MissingProjectScannerTests : IDisposable
     }
 
     [Fact]
-    public async Task ScanAsync_ConflictFolderWithNoRemoteUrl_ClassifiedNeedsUrl()
+    public async Task ScanAsync_ConflictFolderWithNoRemoteUrl_StaysConflictSoContentIsQuarantined()
     {
         var expected = Path.Combine(_root, "conflict-needs-url");
         Directory.CreateDirectory(expected);
@@ -178,7 +178,8 @@ public class MissingProjectScannerTests : IDisposable
 
         var results = await NewScanner().ScanAsync(new[] { input }, CancellationToken.None);
 
-        Assert.Equal(RestoreClassification.MissingNeedsUrl, results[0].Classification);
+        Assert.Equal(RestoreClassification.ConflictNonEmpty, results[0].Classification);
+        Assert.Equal(string.Empty, results[0].RemoteUrl);
     }
 
     [Fact]
@@ -195,6 +196,7 @@ public class MissingProjectScannerTests : IDisposable
         Assert.Equal(RestoreClassification.AlreadyCloned, candidate.Classification);
         // Scanner should surface the live origin so the VM can persist it.
         Assert.Equal("https://github.com/org/discovered-repo.git", candidate.RemoteUrl);
+        Assert.Equal(RestoreUrlSource.LiveRepository, candidate.RemoteUrlSource);
     }
 
     [Fact]
