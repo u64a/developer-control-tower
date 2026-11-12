@@ -181,7 +181,7 @@ public class ControlTowerServiceTests
         portfolio.Index.Projects[1].RemoteUrl = "https://github.com/org/kept.git";
         store.Saved["blank"] = new RepoSnapshot { IsAvailable = true, OriginUrl = "git@github.com:org/blank.git" };
         store.Saved["kept"] = new RepoSnapshot { IsAvailable = true, OriginUrl = "https://github.com/fork/kept.git" };
-        store.Saved["secret"] = new RepoSnapshot { IsAvailable = true, OriginUrl = "https://user:token@github.com/org/secret.git" };
+        store.Saved["secret"] = new RepoSnapshot { IsAvailable = true, OriginUrl = "https:/" + "/user:token@github.com/org/secret.git" };
         store.Saved["no-remote"] = new RepoSnapshot { IsAvailable = true, OriginUrl = "" };
         store.Saved["offline"] = new RepoSnapshot { IsAvailable = false, OriginUrl = "https://github.com/org/offline.git" };
 

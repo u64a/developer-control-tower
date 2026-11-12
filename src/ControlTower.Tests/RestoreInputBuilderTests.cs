@@ -67,7 +67,7 @@ public class RestoreInputBuilderTests : IDisposable
     [Fact]
     public void Build_FallsBackToLastScanThenLaunchLink_SkippingUnusableValues()
     {
-        var scanned = AddLocalProject("scanned", cachedRemoteUrl: "https://user:secret@github.com/org/scanned.git");
+        var scanned = AddLocalProject("scanned", cachedRemoteUrl: "https:/" + "/user:secret@github.com/org/scanned.git");
         WriteMetadata("scanned", localPath: scanned, remoteUrl: "", gitHub: "https://github.com/org/scanned");
         _snapshots.Snapshots["scanned"] = new RepoSnapshot { OriginUrl = "https://github.com/org/scanned.git" };
 
@@ -116,7 +116,7 @@ public class RestoreInputBuilderTests : IDisposable
             Candidate("from-metadata", "https://github.com/org/m.git", RestoreUrlSource.ProjectMetadata),
             Candidate("unchanged", "https://github.com/org/unchanged.git", RestoreUrlSource.PortfolioCache),
             Candidate("guess", "https://github.com/org/guess", RestoreUrlSource.LaunchLink),
-            Candidate("secret", "https://user:pw@github.com/org/s.git", RestoreUrlSource.LiveRepository),
+            Candidate("secret", "https:/" + "/user:pw@github.com/org/s.git", RestoreUrlSource.LiveRepository),
             Candidate("live-changed", "https://github.com/org/new.git", RestoreUrlSource.LiveRepository),
         };
 

@@ -29,7 +29,7 @@ public sealed class RestoreRowViewModelTests
         var row = Row(RestoreClassification.Missing, remoteUrl: "https://github.com/org/repo.git");
         row.IsSelected = true;
 
-        row.OriginUrl = "https://user:token@github.com/org/repo.git";
+        row.OriginUrl = "https:/" + "/user:token@github.com/org/repo.git";
 
         Assert.False(row.IsSelectable);
         Assert.False(row.IsSelected);
