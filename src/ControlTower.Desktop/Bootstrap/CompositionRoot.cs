@@ -163,13 +163,14 @@ namespace ControlTower.Desktop.Bootstrap
                     projectProvider,
                     metadataLocator);
 
+            var snapshotStore = new LocalSnapshotStore();
             var controlTowerService = new ControlTowerService(
                 portfolioProvider,
                 projectProvider,
                 new ProductMapYamlProvider(),
                 new PlanningBoardYamlProvider(),
                 new GitRepoScanner(settings, SshService, CredentialStore, storeProvider),
-                new LocalSnapshotStore(),
+                snapshotStore,
                 new WindowsLaunchService(settings),
                 registrationService,
                 new RoadmapResolver(SshService, storeProvider, CredentialStore),
@@ -294,6 +295,8 @@ namespace ControlTower.Desktop.Bootstrap
                 profileManager,
                 profileState)
             {
+                ProjectMetadataLocator = metadataLocator,
+                SnapshotStore = snapshotStore,
                 LaunchEnvironments = settings.LaunchEnvironments ?? LaunchEnvironmentCatalog.CreateDefault(settings.VsCodeCommand),
                 ArchiveSyncService = archiveSyncService,
                 ArchiveSyncSafetyService = archiveSyncService,
@@ -502,6 +505,12 @@ namespace ControlTower.Desktop.Bootstrap
         public IProjectProvider ProjectProvider { get; }
         public IStoreProvider StoreProvider { get; }
         public IMissingProjectScanner MissingProjectScanner { get; }
+
+        /// <summary>Where each project's central metadata lives; lets Restore find URLs when the repo folder is gone.</summary>
+        public IProjectMetadataLocator ProjectMetadataLocator { get; init; }
+
+        /// <summary>Cached repo snapshots; a fallback origin source for Restore.</summary>
+        public ISnapshotStore SnapshotStore { get; init; }
         public IRestoreOrchestrator RestoreOrchestrator { get; }
         public ILongRunningGitOperationLock GitOperationLock { get; }
         public IRepoScanService RepoScanService { get; }

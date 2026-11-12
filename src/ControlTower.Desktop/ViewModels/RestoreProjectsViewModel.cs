@@ -1,35 +1,36 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
-using System.IO;
+using System.ComponentModel;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
-using ControlTower.Core.Composition;
+using System.Windows.Data;
+using System.Windows.Threading;
 using ControlTower.Core.Contracts;
 using ControlTower.Core.Models;
+using ControlTower.Core.UseCases;
 using ControlTower.Infrastructure.Diagnostics;
 
 namespace ControlTower.Desktop.ViewModels
 {
     /// <summary>
     /// View-model for the Restore Projects dialog. Coordinates the
-    /// <see cref="IMissingProjectScanner"/> (scan phase) and the
-    /// <see cref="IRestoreOrchestrator"/> (batch phase) on a background
-    /// thread while updating per-row state on the UI thread through the
-    /// <see cref="System.Windows.Threading.Dispatcher"/>.
+    /// <see cref="RestoreInputBuilder"/> and <see cref="IMissingProjectScanner"/>
+    /// (scan phase) and the <see cref="IRestoreOrchestrator"/> (batch phase)
+    /// on a background thread while updating per-row state on the UI thread.
     /// </summary>
     public sealed class RestoreProjectsViewModel : ObservableObject
     {
         private readonly IPortfolioProvider _portfolioProvider;
-        private readonly IProjectProvider _projectProvider;
-        private readonly IStoreProvider _storeProvider;
+        private readonly RestoreInputBuilder _inputBuilder;
         private readonly IMissingProjectScanner _scanner;
         private readonly IRestoreOrchestrator _orchestrator;
-        private readonly WorkspaceProfile _activeProfile;
+        private readonly Dispatcher _dispatcher;
 
         private CancellationTokenSource _restoreCts;
+        private List<RestoreRowViewModel> _batch = new List<RestoreRowViewModel>();
 
         /// <summary>
         /// True if anything in this dialog's lifetime changed portfolio.yml
@@ -39,45 +40,81 @@ namespace ControlTower.Desktop.ViewModels
         /// </summary>
         public bool PortfolioMutated { get; private set; }
 
+        /// <summary>
+        /// Asks the user to confirm moving existing folders into quarantine.
+        /// The dialog replaces this so the prompt is owned by its window.
+        /// </summary>
+        public Func<string, bool> ConfirmQuarantine { get; set; } = message =>
+            MessageBox.Show(message, "Restore from Git", MessageBoxButton.OKCancel, MessageBoxImage.Warning)
+                == MessageBoxResult.OK;
+
         public RestoreProjectsViewModel(
             IPortfolioProvider portfolioProvider,
-            IProjectProvider projectProvider,
-            IStoreProvider storeProvider,
+            RestoreInputBuilder inputBuilder,
             IMissingProjectScanner scanner,
-            IRestoreOrchestrator orchestrator,
-            WorkspaceProfile activeProfile = null)
+            IRestoreOrchestrator orchestrator)
         {
             _portfolioProvider = portfolioProvider ?? throw new ArgumentNullException(nameof(portfolioProvider));
-            _projectProvider = projectProvider ?? throw new ArgumentNullException(nameof(projectProvider));
-            _storeProvider = storeProvider ?? throw new ArgumentNullException(nameof(storeProvider));
+            _inputBuilder = inputBuilder ?? throw new ArgumentNullException(nameof(inputBuilder));
             _scanner = scanner ?? throw new ArgumentNullException(nameof(scanner));
             _orchestrator = orchestrator ?? throw new ArgumentNullException(nameof(orchestrator));
-            _activeProfile = activeProfile ?? WorkspaceProfilePolicy.CreateAllProjectsProfile();
+            _dispatcher = Dispatcher.CurrentDispatcher;
 
             Rows = new ObservableCollection<RestoreRowViewModel>();
-            Rows.CollectionChanged += (_, __) =>
-            {
-                OnPropertyChanged(nameof(HasNoRows));
-                OnPropertyChanged(nameof(CanRestore));
-            };
+            RowsView = CollectionViewSource.GetDefaultView(Rows);
+            RowsView.Filter = item =>
+                _showAlreadyCloned
+                || !(item is RestoreRowViewModel row)
+                || row.Classification != RestoreClassification.AlreadyCloned;
         }
 
         public ObservableCollection<RestoreRowViewModel> Rows { get; }
 
-        public bool HasNoRows => Rows.Count == 0 && !IsScanning;
+        /// <summary>Filtered view the grid binds to; hides already-cloned rows by default.</summary>
+        public ICollectionView RowsView { get; }
+
+        private IEnumerable<RestoreRowViewModel> VisibleRows => RowsView.Cast<RestoreRowViewModel>();
+
+        private bool _showAlreadyCloned;
+        public bool ShowAlreadyCloned
+        {
+            get => _showAlreadyCloned;
+            set
+            {
+                if (_showAlreadyCloned == value) return;
+                _showAlreadyCloned = value;
+                OnPropertyChanged();
+                RowsView.Refresh();
+                RefreshDerivedState();
+            }
+        }
+
+        public int AlreadyClonedCount => Rows.Count(r => r.Classification == RestoreClassification.AlreadyCloned);
+        public bool HasAlreadyCloned => AlreadyClonedCount > 0;
+        public string ShowAlreadyClonedLabel => "Show already cloned (" + AlreadyClonedCount + ")";
+
+        public bool HasNoRows => !IsScanning && !VisibleRows.Any();
+
+        public string EmptyHeading => Rows.Count == 0
+            ? "No local projects in the portfolio"
+            : "Nothing needs restoring";
+
+        public string EmptyHint => Rows.Count == 0
+            ? "Restore re-clones registered projects whose local folder has gone. Register a project first."
+            : "All " + Rows.Count + " local project(s) are already cloned where the portfolio expects them.";
 
         private bool _isScanning;
         public bool IsScanning
         {
             get => _isScanning;
-            private set { _isScanning = value; OnPropertyChanged(); OnPropertyChanged(nameof(IsBusy)); OnPropertyChanged(nameof(CanScan)); OnPropertyChanged(nameof(CanRestore)); OnPropertyChanged(nameof(CanCancel)); OnPropertyChanged(nameof(HasNoRows)); }
+            private set { if (Set(ref _isScanning, value)) RefreshDerivedState(); }
         }
 
         private bool _isRestoring;
         public bool IsRestoring
         {
             get => _isRestoring;
-            private set { _isRestoring = value; OnPropertyChanged(); OnPropertyChanged(nameof(IsBusy)); OnPropertyChanged(nameof(CanScan)); OnPropertyChanged(nameof(CanRestore)); OnPropertyChanged(nameof(CanCancel)); OnPropertyChanged(nameof(CanClose)); }
+            private set { if (Set(ref _isRestoring, value)) RefreshDerivedState(); }
         }
 
         public bool IsBusy => IsScanning || IsRestoring;
@@ -86,18 +123,60 @@ namespace ControlTower.Desktop.ViewModels
         public bool CanCancel => IsRestoring;
         public bool CanClose => !IsRestoring;
 
+        public string RestoreButtonText
+        {
+            get
+            {
+                var count = Rows.Count(r => r.IsSelected && r.IsSelectable);
+                return count == 0 ? "Restore selected" : "Restore selected (" + count + ")";
+            }
+        }
+
+        /// <summary>
+        /// Tri-state backing for the header checkbox: true when every
+        /// visible selectable row is ticked, false when none are, null when mixed.
+        /// </summary>
+        public bool? AreAllSelected
+        {
+            get
+            {
+                var selectable = VisibleRows.Where(r => r.IsSelectable).ToList();
+                var selected = selectable.Count(r => r.IsSelected);
+                if (selected == 0) return false;
+                return selected == selectable.Count ? true : (bool?)null;
+            }
+            set
+            {
+                // A click on the indeterminate box means "select everything".
+                var select = value != false;
+                foreach (var row in VisibleRows.Where(r => r.IsSelectable).ToList())
+                {
+                    row.IsSelected = select;
+                }
+                RefreshDerivedState();
+            }
+        }
+
+        /// <summary>Overall batch progress, 0–100. Meaningful only while restoring.</summary>
+        private double _overallProgress;
+        public double OverallProgress
+        {
+            get => _overallProgress;
+            private set => Set(ref _overallProgress, value);
+        }
+
         private string _statusText = string.Empty;
         public string StatusText
         {
             get => _statusText;
-            private set { _statusText = value; OnPropertyChanged(); }
+            private set => Set(ref _statusText, value);
         }
 
         private string _summaryText = string.Empty;
         public string SummaryText
         {
             get => _summaryText;
-            private set { _summaryText = value; OnPropertyChanged(); }
+            private set => Set(ref _summaryText, value);
         }
 
         public async Task ScanAsync()
@@ -105,7 +184,8 @@ namespace ControlTower.Desktop.ViewModels
             if (IsBusy) return;
 
             IsScanning = true;
-            StatusText = "Scanning portfolio for local projects that need cloning…";
+            StatusText = string.Empty;
+            SummaryText = "Checking the portfolio against local folders…";
             foreach (var existing in Rows)
             {
                 existing.PropertyChanged -= OnRowPropertyChanged;
@@ -113,48 +193,34 @@ namespace ControlTower.Desktop.ViewModels
             Rows.Clear();
             try
             {
-                var inputs = BuildInputs();
-                if (inputs.Count == 0)
+                var (inputs, candidates) = await Task.Run(async () =>
                 {
-                    SummaryText = "No local-store projects were found in the portfolio.";
-                    StatusText = string.Empty;
-                    return;
-                }
+                    var built = _inputBuilder.Build();
+                    var scanned = await _scanner.ScanAsync(built, CancellationToken.None).ConfigureAwait(false);
+                    return (built, scanned);
+                }).ConfigureAwait(true);
 
-                AppLogger.Info("Restore", $"Scan starting for {inputs.Count} input project(s).");
-                IReadOnlyList<RestoreCandidate> candidates =
-                    await Task.Run(() => _scanner.ScanAsync(inputs, CancellationToken.None)).ConfigureAwait(true);
+                AppLogger.Info("Restore", $"Scan complete: {candidates.Count} candidate(s) from {inputs.Count} local project(s).");
 
-                // Persist any new origin URLs the scanner discovered. Compare each
-                // candidate's RemoteUrl (live > project.yml > cache) against the
-                // cached input value; if it's a non-credential change, write it back.
-                var cachesUpdated = TryPersistDiscoveredOrigins(inputs, candidates);
+                var cachesUpdated = WriteCacheUpdates(RestoreInputBuilder.SelectOriginsToCache(inputs, candidates));
                 if (cachesUpdated > 0)
                 {
                     PortfolioMutated = true;
-                    StatusText = $"Cached {cachesUpdated} project origin URL(s) into portfolio.yml.";
-                    AppLogger.Info("Restore", $"Wrote {cachesUpdated} new origin URL(s) to portfolio.yml.");
-                }
-                else
-                {
-                    StatusText = string.Empty;
+                    StatusText = $"Saved {cachesUpdated} origin URL(s) to portfolio.yml for future restores.";
+                    AppLogger.Info("Restore", $"Wrote {cachesUpdated} origin URL(s) to portfolio.yml.");
                 }
 
-                foreach (var candidate in candidates)
+                foreach (var candidate in candidates
+                    .OrderBy(SortRank)
+                    .ThenBy(c => c.ProjectName, StringComparer.OrdinalIgnoreCase))
                 {
                     var row = RestoreRowViewModel.FromCandidate(candidate);
+                    // Pre-select what can be restored without any decision
+                    // from the user. Conflicts move a folder, so they stay opt-in.
+                    row.IsSelected = row.IsSelectable && row.Action == RestoreAction.Clone;
                     row.PropertyChanged += OnRowPropertyChanged;
                     Rows.Add(row);
                 }
-                // Pre-select the rows we can act on without user prompting.
-                // MissingNeedsUrl rows are intentionally NOT pre-selected — the
-                // user has to type a URL to make them selectable.
-                foreach (var r in Rows.Where(r => r.IsSelectable && r.Action == RestoreAction.Clone))
-                {
-                    r.IsSelected = true;
-                }
-                UpdateSummary();
-                AppLogger.Info("Restore", $"Scan complete: {Rows.Count} candidate(s).");
             }
             catch (Exception ex)
             {
@@ -164,26 +230,7 @@ namespace ControlTower.Desktop.ViewModels
             finally
             {
                 IsScanning = false;
-                NotifyCommandsChanged();
             }
-        }
-
-        public void SelectAllSelectable()
-        {
-            foreach (var r in Rows.Where(r => r.IsSelectable))
-            {
-                r.IsSelected = true;
-            }
-            NotifyCommandsChanged();
-        }
-
-        public void SelectNone()
-        {
-            foreach (var r in Rows)
-            {
-                r.IsSelected = false;
-            }
-            NotifyCommandsChanged();
         }
 
         public async Task RestoreSelectedAsync()
@@ -192,74 +239,74 @@ namespace ControlTower.Desktop.ViewModels
             var selected = Rows.Where(r => r.IsSelected && r.IsSelectable).ToList();
             if (selected.Count == 0)
             {
-                StatusText = "Select at least one row to restore.";
+                StatusText = "Select at least one project to restore.";
                 return;
             }
 
-            // Confirm quarantine actions.
             var willQuarantine = selected.Count(r => r.Action == RestoreAction.QuarantineAndClone);
             if (willQuarantine > 0)
             {
                 var msg = willQuarantine == 1
-                    ? "1 project will have its existing folder moved into a quarantine before cloning. Continue?"
-                    : willQuarantine + " projects will have their existing folders moved into a quarantine before cloning. Continue?";
-                var confirm = MessageBox.Show(msg, "Restore from Git",
-                    MessageBoxButton.OKCancel, MessageBoxImage.Warning);
-                if (confirm != MessageBoxResult.OK) return;
+                    ? "1 project will have its existing folder moved into quarantine before cloning. Continue?"
+                    : willQuarantine + " projects will have their existing folders moved into quarantine before cloning. Continue?";
+                if (!ConfirmQuarantine(msg)) return;
             }
 
             _restoreCts = new CancellationTokenSource();
+            var token = _restoreCts.Token;
+            _batch = selected;
+            OverallProgress = 0;
+            foreach (var row in Rows) row.IsLocked = true;
             IsRestoring = true;
-            StatusText = "Restoring…";
+            StatusText = "Restoring " + selected.Count + " project(s)…";
             try
             {
-                var byId = Rows.ToDictionary(r => r.ProjectId, StringComparer.Ordinal);
-                foreach (var r in selected) r.MarkPending();
+                foreach (var row in selected) row.MarkPending();
 
-                // For MissingNeedsUrl rows the user typed a URL inline — substitute
-                // it into the candidate so the orchestrator clones from the right
-                // source. Records support `with` for non-destructive updates.
-                var selections = selected.Select(r =>
-                {
-                    var candidate = r.Candidate;
-                    var effectiveUrl = r.EffectiveRemoteUrl;
-                    if (!string.Equals(candidate.RemoteUrl, effectiveUrl, StringComparison.Ordinal))
-                    {
-                        candidate = candidate with { RemoteUrl = effectiveUrl };
-                    }
-                    return new RestoreSelection(candidate, r.Action);
-                }).ToList();
+                // The orchestrator clones from the candidate's URL, so fold
+                // in whatever the user typed or corrected.
+                var selections = selected
+                    .Select(row => new RestoreSelection(row.Candidate with { RemoteUrl = row.OriginUrl }, row.Action))
+                    .ToList();
 
-                IProgress<RestoreRowUpdate> progress = new DispatcherProgress<RestoreRowUpdate>(update =>
+                // Project ids are unique in a healthy portfolio; if they are
+                // not, the first row wins rather than the whole batch failing.
+                var byId = new Dictionary<string, RestoreRowViewModel>(StringComparer.Ordinal);
+                foreach (var row in selected) byId.TryAdd(row.ProjectId, row);
+
+                IProgress<RestoreRowUpdate> progress = new DispatcherProgress<RestoreRowUpdate>(_dispatcher, update =>
                 {
                     if (byId.TryGetValue(update.ProjectId, out var row))
                     {
                         row.Apply(update);
+                        UpdateOverallProgress();
                     }
                 });
 
                 AppLogger.Info("Restore", $"Restore starting for {selections.Count} row(s).");
-                await Task.Run(
-                    () => _orchestrator.RestoreAsync(selections, progress, _restoreCts.Token),
-                    _restoreCts.Token).ConfigureAwait(true);
+                await Task.Run(() => _orchestrator.RestoreAsync(selections, progress, token)).ConfigureAwait(true);
 
-                // Any clone that reached Done changes the project's IsReady
-                // state in the host portfolio view, and may have written a
-                // remote_url back below.
-                if (Rows.Any(r => r.State == RestoreRowState.Done))
+                // Progress reports are posted to the dispatcher; let the
+                // queued ones land before reading final row states.
+                await _dispatcher.InvokeAsync(() => { }, DispatcherPriority.ContextIdle);
+
+                var toCache = new Dictionary<string, string>(StringComparer.Ordinal);
+                for (int i = 0; i < selected.Count; i++)
+                {
+                    var url = selections[i].Candidate.RemoteUrl;
+                    if (selected[i].State == RestoreRowState.Done && !UrlSanitizer.HasCredentials(url))
+                    {
+                        toCache[selected[i].ProjectId] = url;
+                    }
+                }
+
+                if (selected.Any(r => r.State == RestoreRowState.Done))
                 {
                     PortfolioMutated = true;
                 }
+                WriteCacheUpdates(toCache);
 
-                // Cache the URLs we just used for any newly-successful clones so
-                // future restores don't need the user to retype them.
-                var savedAfterRestore = TryPersistAfterRestore(selections);
-                if (savedAfterRestore > 0)
-                {
-                    PortfolioMutated = true;
-                }
-                StatusText = BuildCompletionStatus()
-                    + (savedAfterRestore > 0 ? $" Cached {savedAfterRestore} URL(s) to portfolio.yml." : string.Empty);
+                StatusText = BuildCompletionStatus(token.IsCancellationRequested);
                 AppLogger.Info("Restore", "Restore complete. " + StatusText);
             }
             catch (OperationCanceledException)
@@ -274,11 +321,16 @@ namespace ControlTower.Desktop.ViewModels
             }
             finally
             {
-                IsRestoring = false;
+                foreach (var row in Rows)
+                {
+                    row.IsLocked = false;
+                    // Anything still queued never started (e.g. the wait for
+                    // the git lock was cancelled); return it to idle.
+                    row.ResetIfPending();
+                }
                 _restoreCts?.Dispose();
                 _restoreCts = null;
-                UpdateSummary();
-                NotifyCommandsChanged();
+                IsRestoring = false;
             }
         }
 
@@ -287,233 +339,65 @@ namespace ControlTower.Desktop.ViewModels
             try
             {
                 _restoreCts?.Cancel();
-                StatusText = "Cancelling…";
+                StatusText = "Cancelling — waiting for git to stop…";
             }
-            catch { /* ignore */ }
+            catch (ObjectDisposedException) { }
         }
 
-        public void NotifyCommandsChanged()
+        /// <summary>Called when the user tries to close the window mid-restore.</summary>
+        public void NotifyCloseBlocked()
         {
+            StatusText = "A restore is still running. Cancel it first, or wait for it to finish.";
+        }
+
+        private void OnRowPropertyChanged(object sender, PropertyChangedEventArgs e)
+        {
+            if (e.PropertyName == nameof(RestoreRowViewModel.IsSelected)
+                || e.PropertyName == nameof(RestoreRowViewModel.IsSelectable)
+                || e.PropertyName == nameof(RestoreRowViewModel.State))
+            {
+                RefreshDerivedState();
+            }
+        }
+
+        private void RefreshDerivedState()
+        {
+            OnPropertyChanged(nameof(IsBusy));
             OnPropertyChanged(nameof(CanScan));
             OnPropertyChanged(nameof(CanRestore));
             OnPropertyChanged(nameof(CanCancel));
             OnPropertyChanged(nameof(CanClose));
-            OnPropertyChanged(nameof(IsBusy));
+            OnPropertyChanged(nameof(RestoreButtonText));
+            OnPropertyChanged(nameof(AreAllSelected));
+            OnPropertyChanged(nameof(HasNoRows));
+            OnPropertyChanged(nameof(EmptyHeading));
+            OnPropertyChanged(nameof(EmptyHint));
+            OnPropertyChanged(nameof(AlreadyClonedCount));
+            OnPropertyChanged(nameof(HasAlreadyCloned));
+            OnPropertyChanged(nameof(ShowAlreadyClonedLabel));
+            if (!IsScanning) UpdateSummary();
         }
 
-        private void OnRowPropertyChanged(object sender, System.ComponentModel.PropertyChangedEventArgs e)
+        private void UpdateOverallProgress()
         {
-            if (e.PropertyName == nameof(RestoreRowViewModel.IsSelected)
-                || e.PropertyName == nameof(RestoreRowViewModel.Action)
-                || e.PropertyName == nameof(RestoreRowViewModel.IsSelectable))
+            if (_batch.Count == 0) return;
+            double done = 0;
+            foreach (var row in _batch)
             {
-                OnPropertyChanged(nameof(CanRestore));
+                if (row.IsFinished) done += 1;
+                else if (row.State == RestoreRowState.Cloning && row.PercentComplete.HasValue)
+                    done += Math.Min(row.PercentComplete.Value, 100) / 100.0 * 0.95;
             }
-        }
-
-        private IReadOnlyList<ProjectRestoreInput> BuildInputs()
-        {
-            var inputs = new List<ProjectRestoreInput>();
-            PortfolioIndex portfolio;
-            try
-            {
-                portfolio = _portfolioProvider.LoadPortfolio();
-            }
-            catch (Exception ex)
-            {
-                AppLogger.Warn("Restore", "LoadPortfolio threw: " + ex.Message);
-                return inputs;
-            }
-
-            if (portfolio?.Projects == null) return inputs;
-
-            foreach (var projectRef in WorkspaceProfilePolicy.FilterProjects(
-                portfolio.Projects,
-                _activeProfile))
-            {
-                if (string.IsNullOrWhiteSpace(projectRef.Id)) continue;
-
-                bool isLocalStore;
-                string expectedPath;
-
-                if (!string.IsNullOrWhiteSpace(projectRef.StoreId))
-                {
-                    // Store-backed entry: ask the store provider. SSH stores
-                    // are filtered out (handled by Feature B Relocate later).
-                    var store = _storeProvider.GetStore(projectRef.StoreId);
-                    isLocalStore = store != null && !store.IsSsh;
-                    expectedPath = isLocalStore
-                        ? _storeProvider.ResolveProjectPath(projectRef.StoreId, projectRef.Id, projectRef.Folder)
-                        : string.Empty;
-                }
-                else
-                {
-                    // Legacy v0 entry: portfolio.yml carries a raw `path:` value.
-                    // Treat it as local if the path is a fully qualified file path
-                    // and not an SSH-style host:path string. Mapped drives and UNC
-                    // paths are accepted (git clone supports both).
-                    expectedPath = projectRef.Path ?? string.Empty;
-                    isLocalStore = IsFullyQualifiedLocalPath(expectedPath);
-                }
-
-                if (string.IsNullOrWhiteSpace(expectedPath))
-                {
-                    continue;
-                }
-
-                var slug = string.IsNullOrWhiteSpace(projectRef.Folder)
-                    ? projectRef.Id
-                    : projectRef.Folder;
-
-                // RemoteUrl priority for the SCANNER INPUT:
-                //   1. Live project.yml Locations.RemoteUrl (if folder + yaml exist)
-                //   2. Cached projectRef.RemoteUrl (always tried as fallback)
-                // The scanner then runs git inspection and may overwrite the
-                // candidate's RemoteUrl with the live .git/config origin — that
-                // becomes the authoritative value used for cache writeback.
-                string remoteUrl = string.Empty;
-                string displayName = projectRef.Id;
-
-                if (isLocalStore && !string.IsNullOrWhiteSpace(expectedPath))
-                {
-                    try
-                    {
-                        var loaded = _projectProvider.LoadProject(expectedPath);
-                        if (loaded?.Project != null)
-                        {
-                            remoteUrl = loaded.Project.Locations?.RemoteUrl ?? string.Empty;
-                            if (!string.IsNullOrWhiteSpace(loaded.Project.DisplayName))
-                            {
-                                displayName = loaded.Project.DisplayName;
-                            }
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        // Folder missing is the dominant case here — fine. Other
-                        // errors are logged for diagnostics but don't block the row.
-                        AppLogger.Warn(
-                            "Restore",
-                            $"LoadProject('{expectedPath}') failed: {ex.Message}");
-                    }
-                }
-
-                if (string.IsNullOrWhiteSpace(remoteUrl))
-                {
-                    remoteUrl = projectRef.RemoteUrl ?? string.Empty;
-                }
-
-                inputs.Add(new ProjectRestoreInput(
-                    ProjectId: projectRef.Id,
-                    ProjectName: displayName,
-                    Slug: slug,
-                    ExpectedPath: expectedPath,
-                    RemoteUrl: remoteUrl,
-                    IsLocalStore: isLocalStore));
-            }
-            return inputs;
-        }
-
-        /// <summary>
-        /// True when the path is a fully qualified Windows-style filesystem
-        /// path (drive-rooted, UNC, or absolute POSIX). Excludes drive-relative
-        /// (<c>C:foo</c>) and SCP-style SSH (<c>user@host:path</c>) forms.
-        /// </summary>
-        private static bool IsFullyQualifiedLocalPath(string value)
-        {
-            if (string.IsNullOrWhiteSpace(value)) return false;
-
-            // Reject SCP-style SSH: "user@host:path" or "host:path". A drive
-            // letter looks like "C:" so we must distinguish — drive letter is
-            // a single letter followed by `:` and then `\` or `/`.
-            var atIndex = value.IndexOf('@');
-            var colonIndex = value.IndexOf(':');
-            if (colonIndex > 0)
-            {
-                bool isDriveLetter = colonIndex == 1
-                    && char.IsLetter(value[0])
-                    && value.Length > 2 && (value[2] == '\\' || value[2] == '/');
-                bool isScpStyle = !isDriveLetter && (atIndex >= 0 || colonIndex > 1);
-                if (isScpStyle) return false;
-            }
-
-            try
-            {
-                return Path.IsPathFullyQualified(value);
-            }
-            catch
-            {
-                return false;
-            }
-        }
-
-        /// <summary>
-        /// Walks the scan output and persists any newly-discovered, clean
-        /// origin URL back into portfolio.yml. Returns the count of entries
-        /// updated. Never writes credential-bearing URLs.
-        /// </summary>
-        private int TryPersistDiscoveredOrigins(
-            IReadOnlyList<ProjectRestoreInput> inputs,
-            IReadOnlyList<RestoreCandidate> candidates)
-        {
-            if (inputs == null || candidates == null || candidates.Count == 0) return 0;
-
-            var inputsById = inputs.ToDictionary(i => i.ProjectId, StringComparer.Ordinal);
-            var toCache = new Dictionary<string, string>(StringComparer.Ordinal);
-
-            foreach (var c in candidates)
-            {
-                if (string.IsNullOrWhiteSpace(c.RemoteUrl)) continue;
-                if (UrlCarriesCredentials(c.RemoteUrl))
-                {
-                    AppLogger.Warn("Restore",
-                        $"Refused to cache credential-bearing origin URL for project '{c.ProjectId}'.");
-                    continue;
-                }
-
-                inputsById.TryGetValue(c.ProjectId, out var input);
-                var inputUrl = input?.RemoteUrl ?? string.Empty;
-
-                // Only persist when this differs from what the input carried
-                // (input may be cache OR live project.yml — both are persisted
-                // sources, no point rewriting if they already match).
-                if (!string.Equals(inputUrl, c.RemoteUrl, StringComparison.Ordinal))
-                {
-                    toCache[c.ProjectId] = c.RemoteUrl;
-                }
-            }
-
-            if (toCache.Count == 0) return 0;
-            return WriteCacheUpdates(toCache);
-        }
-
-        private int TryPersistAfterRestore(IReadOnlyList<RestoreSelection> selections)
-        {
-            if (selections == null || selections.Count == 0) return 0;
-
-            var byId = Rows.ToDictionary(r => r.ProjectId, StringComparer.Ordinal);
-            var toCache = new Dictionary<string, string>(StringComparer.Ordinal);
-
-            foreach (var sel in selections)
-            {
-                if (sel?.Candidate == null) continue;
-                if (!byId.TryGetValue(sel.Candidate.ProjectId, out var row)) continue;
-                if (row.State != RestoreRowState.Done) continue;
-                var url = sel.Candidate.RemoteUrl;
-                if (string.IsNullOrWhiteSpace(url)) continue;
-                if (UrlCarriesCredentials(url)) continue;
-                toCache[sel.Candidate.ProjectId] = url;
-            }
-
-            if (toCache.Count == 0) return 0;
-            return WriteCacheUpdates(toCache);
+            OverallProgress = done / _batch.Count * 100.0;
         }
 
         private int WriteCacheUpdates(IReadOnlyDictionary<string, string> toCache)
         {
+            if (toCache == null || toCache.Count == 0) return 0;
             try
             {
                 var current = _portfolioProvider.LoadPortfolio();
+                if (current?.Projects == null) return 0;
                 int updated = 0;
                 foreach (var p in current.Projects)
                 {
@@ -537,58 +421,58 @@ namespace ControlTower.Desktop.ViewModels
             }
         }
 
-        // Mirrors RestoreOrchestrator.UrlCarriesCredentials / AsyncCloneService.UrlCarriesCredentials.
-        // Kept here so the VM can pre-check before writing to portfolio.yml.
-        // All three implementations must stay in sync.
-        private static bool UrlCarriesCredentials(string url)
-        {
-            if (string.IsNullOrWhiteSpace(url)) return false;
-            if (Uri.TryCreate(url, UriKind.Absolute, out var uri))
-            {
-                if (string.IsNullOrEmpty(uri.UserInfo)) return false;
-                if (string.Equals(uri.Scheme, "ssh", StringComparison.OrdinalIgnoreCase))
-                    return uri.UserInfo.Contains(':');
-                return true;
-            }
-            return false;
-        }
-
         private void UpdateSummary()
         {
-            if (Rows.Count == 0)
+            var parts = new List<string>();
+            void Add(int count, string label)
             {
-                SummaryText = "No candidates.";
-                return;
+                if (count > 0) parts.Add(count + " " + label);
             }
-            var actionable = Rows.Count(r => r.IsSelectable);
-            var blocked = Rows.Count - actionable;
-            SummaryText = blocked == 0
-                ? actionable + " candidate(s) ready to restore."
-                : actionable + " ready, " + blocked + " require manual review.";
+
+            Add(Rows.Count(r => r.State == RestoreRowState.Done), "restored");
+            Add(Rows.Count(r => r.State == RestoreRowState.Failed), "failed");
+            Add(Rows.Count(r => r.IsRestorable && r.State == RestoreRowState.Idle && r.HasValidUrl), "ready to restore");
+            Add(Rows.Count(r => r.IsRestorable && r.State == RestoreRowState.Idle && !r.HasValidUrl), "need a URL");
+            Add(Rows.Count(r => r.Classification == RestoreClassification.UnsafeExisting), "need review");
+            Add(AlreadyClonedCount, "already cloned");
+            SummaryText = string.Join("  ·  ", parts);
         }
 
-        private string BuildCompletionStatus()
+        private string BuildCompletionStatus(bool cancelled)
         {
-            int done = Rows.Count(r => r.State == RestoreRowState.Done);
-            int failed = Rows.Count(r => r.State == RestoreRowState.Failed);
-            int skipped = Rows.Count(r => r.State == RestoreRowState.Skipped);
-            return $"Done: {done}, failed: {failed}, skipped: {skipped}.";
+            int done = _batch.Count(r => r.State == RestoreRowState.Done);
+            int failed = _batch.Count(r => r.State == RestoreRowState.Failed);
+            int skipped = _batch.Count(r => r.State == RestoreRowState.Skipped);
+
+            var text = (cancelled ? "Cancelled. " : string.Empty) + "Restored " + done + " of " + _batch.Count + ".";
+            if (failed > 0) text += " " + failed + " failed — check the error on each row, then restore again.";
+            if (skipped > 0) text += " " + skipped + " skipped.";
+            return text;
         }
+
+        private static int SortRank(RestoreCandidate c) => c.Classification switch
+        {
+            RestoreClassification.Missing => 0,
+            RestoreClassification.EmptyFolder => 0,
+            RestoreClassification.MissingNeedsUrl => 1,
+            RestoreClassification.ConflictNonEmpty => 2,
+            RestoreClassification.UnsafeExisting => 3,
+            _ => 4
+        };
 
         /// <summary>
-        /// IProgress&lt;T&gt; that marshals reports onto the UI dispatcher
-        /// captured at construction time. Used so the orchestrator (which
-        /// runs on a thread-pool task) can safely mutate the ObservableCollection.
+        /// IProgress&lt;T&gt; that marshals reports onto the UI dispatcher so
+        /// the orchestrator (running on a thread-pool task) can safely
+        /// update row view-models.
         /// </summary>
         private sealed class DispatcherProgress<T> : IProgress<T>
         {
-            private readonly System.Windows.Threading.Dispatcher _dispatcher;
+            private readonly Dispatcher _dispatcher;
             private readonly Action<T> _onReport;
-            public DispatcherProgress(Action<T> onReport)
+            public DispatcherProgress(Dispatcher dispatcher, Action<T> onReport)
             {
+                _dispatcher = dispatcher;
                 _onReport = onReport;
-                _dispatcher = System.Windows.Application.Current?.Dispatcher
-                    ?? System.Windows.Threading.Dispatcher.CurrentDispatcher;
             }
             public void Report(T value)
             {
@@ -600,8 +484,8 @@ namespace ControlTower.Desktop.ViewModels
 
     /// <summary>
     /// Row-level view-model for a single <see cref="RestoreCandidate"/>.
-    /// Tracks user selection, the chosen <see cref="RestoreAction"/>, and
-    /// live state emitted by the orchestrator.
+    /// Tracks user selection, the origin URL to clone from, the chosen
+    /// <see cref="RestoreAction"/>, and live state from the orchestrator.
     /// </summary>
     public sealed class RestoreRowViewModel : ObservableObject
     {
@@ -610,8 +494,10 @@ namespace ControlTower.Desktop.ViewModels
             Candidate = candidate;
             _state = MapInitialState(candidate.Classification);
             _detail = candidate.Detail ?? string.Empty;
-            _action = DefaultActionFor(candidate.Classification);
-            _userProvidedUrl = string.Empty;
+            _action = candidate.Classification == RestoreClassification.ConflictNonEmpty
+                ? RestoreAction.QuarantineAndClone
+                : RestoreAction.Clone;
+            _originUrl = (candidate.RemoteUrl ?? string.Empty).Trim();
         }
 
         public static RestoreRowViewModel FromCandidate(RestoreCandidate candidate)
@@ -621,83 +507,86 @@ namespace ControlTower.Desktop.ViewModels
 
         public string ProjectId => Candidate.ProjectId;
         public string ProjectName => Candidate.ProjectName;
-        public string Slug => Candidate.Slug;
         public string ExpectedPath => Candidate.ExpectedPath;
-        public string RemoteUrl => Candidate.RemoteUrl;
         public RestoreClassification Classification => Candidate.Classification;
 
-        public string ClassificationLabel => MapClassificationLabel(Classification);
+        /// <summary>True for rows whose folder can be (re)cloned at all.</summary>
+        public bool IsRestorable =>
+            Classification == RestoreClassification.Missing
+            || Classification == RestoreClassification.MissingNeedsUrl
+            || Classification == RestoreClassification.EmptyFolder
+            || Classification == RestoreClassification.ConflictNonEmpty;
 
         /// <summary>
-        /// For <see cref="RestoreClassification.MissingNeedsUrl"/> rows the
-        /// user must paste the origin URL before the row can be cloned. For
-        /// all other classifications this is empty and ignored.
+        /// The URL this row will clone from. Pre-filled from the best known
+        /// source and editable, so a missing or stale origin can be fixed
+        /// in place.
         /// </summary>
-        private string _userProvidedUrl;
-        public string UserProvidedUrl
+        private string _originUrl;
+        public string OriginUrl
         {
-            get => _userProvidedUrl;
+            get => _originUrl;
             set
             {
                 var trimmed = (value ?? string.Empty).Trim();
-                if (_userProvidedUrl != trimmed)
-                {
-                    _userProvidedUrl = trimmed;
-                    OnPropertyChanged();
-                    OnPropertyChanged(nameof(EffectiveRemoteUrl));
-                    OnPropertyChanged(nameof(IsSelectable));
-                    OnPropertyChanged(nameof(UrlValidationMessage));
-                    OnPropertyChanged(nameof(HasUrlValidationMessage));
-                    // Auto-deselect if URL becomes invalid.
-                    if (!IsSelectable && IsSelected) IsSelected = false;
-                }
+                if (_originUrl == trimmed) return;
+
+                var wasValid = HasValidUrl;
+                _originUrl = trimmed;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(HasValidUrl));
+                OnPropertyChanged(nameof(UrlHint));
+                OnPropertyChanged(nameof(IsUrlHintError));
+                OnPropertyChanged(nameof(HasUrlHint));
+                OnPropertyChanged(nameof(StateLabel));
+                OnPropertyChanged(nameof(StateBrushKey));
+                OnPropertyChanged(nameof(IsSelectable));
+                OnPropertyChanged(nameof(CanChangeSelection));
+
+                if (!IsSelectable) IsSelected = false;
+                // Supplying the missing URL is a clear "restore this one".
+                else if (!wasValid && Action == RestoreAction.Clone) IsSelected = true;
             }
         }
 
-        public bool NeedsUserUrl => Classification == RestoreClassification.MissingNeedsUrl;
+        public bool HasValidUrl =>
+            RestoreInputBuilder.LooksLikeCloneUrl(_originUrl) && !UrlSanitizer.HasCredentials(_originUrl);
 
-        public string EffectiveRemoteUrl =>
-            NeedsUserUrl ? _userProvidedUrl : Candidate.RemoteUrl;
+        public bool ShowUrlEditor => IsRestorable && _state != RestoreRowState.Done;
+        public bool CanEditUrl => ShowUrlEditor && !_isLocked;
 
-        public string UrlValidationMessage
+        private bool IsUrlEdited =>
+            !string.Equals(_originUrl, (Candidate.RemoteUrl ?? string.Empty).Trim(), StringComparison.Ordinal);
+
+        public string UrlHint
         {
             get
             {
-                if (!NeedsUserUrl) return string.Empty;
-                if (string.IsNullOrWhiteSpace(_userProvidedUrl)) return string.Empty;
-                if (UrlCarriesCredentials(_userProvidedUrl))
-                    return "URL contains embedded credentials. Remove them — use Git Credential Manager or SSH-agent.";
-                if (!LooksLikeSupportedUrl(_userProvidedUrl))
-                    return "URL is not in a supported form (https://… or git@host:owner/repo).";
-                return string.Empty;
-            }
-        }
-
-        public bool HasUrlValidationMessage => !string.IsNullOrEmpty(UrlValidationMessage);
-
-        public bool IsSelectable
-        {
-            get
-            {
-                switch (Classification)
+                if (!IsRestorable) return string.Empty;
+                if (string.IsNullOrEmpty(_originUrl)) return "No origin recorded — paste the clone URL.";
+                if (UrlSanitizer.HasCredentials(_originUrl))
+                    return "Remove the embedded credentials — Git Credential Manager or SSH-agent signs in.";
+                if (!RestoreInputBuilder.LooksLikeCloneUrl(_originUrl))
+                    return "Not a clone URL. Use https://… or git@host:owner/repo.";
+                if (IsUrlEdited) return "Entered manually";
+                return Candidate.RemoteUrlSource switch
                 {
-                    case RestoreClassification.Missing:
-                    case RestoreClassification.EmptyFolder:
-                    case RestoreClassification.ConflictNonEmpty:
-                        return true;
-                    case RestoreClassification.MissingNeedsUrl:
-                        return !string.IsNullOrWhiteSpace(_userProvidedUrl)
-                            && !UrlCarriesCredentials(_userProvidedUrl)
-                            && LooksLikeSupportedUrl(_userProvidedUrl);
-                    default:
-                        return false;
-                }
+                    RestoreUrlSource.PortfolioCache => "From portfolio.yml",
+                    RestoreUrlSource.ProjectMetadata => "From project metadata",
+                    RestoreUrlSource.LastScan => "From the last repository scan",
+                    RestoreUrlSource.LaunchLink => "From the project's repository link — check before restoring",
+                    _ => string.Empty
+                };
             }
         }
 
-        public bool ShowActionPicker => Classification == RestoreClassification.ConflictNonEmpty;
+        public bool HasUrlHint => !string.IsNullOrEmpty(UrlHint);
+        public bool IsUrlHintError => IsRestorable && !string.IsNullOrEmpty(_originUrl) && !HasValidUrl;
 
-        public bool ShowUrlEditor => NeedsUserUrl;
+        public bool IsSelectable => IsRestorable && _state != RestoreRowState.Done && HasValidUrl;
+
+        public bool ShowActionPicker =>
+            Classification == RestoreClassification.ConflictNonEmpty && _state != RestoreRowState.Done;
 
         public IReadOnlyList<RestoreActionOption> ActionOptions { get; } = new[]
         {
@@ -709,8 +598,25 @@ namespace ControlTower.Desktop.ViewModels
         public bool IsSelected
         {
             get => _isSelected;
-            set { if (_isSelected != value) { _isSelected = value; OnPropertyChanged(); } }
+            set => Set(ref _isSelected, value);
         }
+
+        /// <summary>Set by the dialog while a batch is running so inputs can't change under it.</summary>
+        private bool _isLocked;
+        public bool IsLocked
+        {
+            get => _isLocked;
+            set
+            {
+                if (Set(ref _isLocked, value))
+                {
+                    OnPropertyChanged(nameof(CanEditUrl));
+                    OnPropertyChanged(nameof(CanChangeSelection));
+                }
+            }
+        }
+
+        public bool CanChangeSelection => IsSelectable && !_isLocked;
 
         private RestoreAction _action;
         public RestoreAction Action
@@ -718,10 +624,8 @@ namespace ControlTower.Desktop.ViewModels
             get => _action;
             set
             {
-                if (_action != value)
+                if (Set(ref _action, value))
                 {
-                    _action = value;
-                    OnPropertyChanged();
                     OnPropertyChanged(nameof(SelectedActionOption));
                 }
             }
@@ -739,50 +643,115 @@ namespace ControlTower.Desktop.ViewModels
             get => _state;
             private set
             {
-                if (_state != value)
-                {
-                    _state = value;
-                    OnPropertyChanged();
-                    OnPropertyChanged(nameof(StateLabel));
-                    OnPropertyChanged(nameof(StateBrushKey));
-                    OnPropertyChanged(nameof(IsInProgress));
-                }
+                if (!Set(ref _state, value)) return;
+                OnPropertyChanged(nameof(StateLabel));
+                OnPropertyChanged(nameof(StateBrushKey));
+                OnPropertyChanged(nameof(IsCloning));
+                OnPropertyChanged(nameof(PercentDisplay));
+                OnPropertyChanged(nameof(IsFinished));
+                OnPropertyChanged(nameof(CanEditUrl));
+                OnPropertyChanged(nameof(ShowUrlEditor));
+                OnPropertyChanged(nameof(ShowActionPicker));
+                OnPropertyChanged(nameof(IsSelectable));
+                OnPropertyChanged(nameof(CanChangeSelection));
+                if (!IsSelectable) IsSelected = false;
             }
         }
 
-        public string StateLabel => MapStateLabel(_state);
-        public string StateBrushKey => MapStateBrushKey(_state);
-        public bool IsInProgress =>
-            _state == RestoreRowState.Quarantining || _state == RestoreRowState.Cloning;
+        public string StateLabel
+        {
+            get
+            {
+                switch (_state)
+                {
+                    case RestoreRowState.Pending: return "Queued";
+                    case RestoreRowState.Quarantining: return "Moving folder";
+                    case RestoreRowState.Cloning: return "Cloning";
+                    case RestoreRowState.Done: return "Restored";
+                    case RestoreRowState.Failed: return "Failed";
+                    case RestoreRowState.Skipped: return "Skipped";
+                    case RestoreRowState.AlreadyCloned: return "Already cloned";
+                    case RestoreRowState.UnsafeExisting: return "Needs review";
+                }
+
+                if (!HasValidUrl) return "Needs URL";
+                return Classification switch
+                {
+                    RestoreClassification.EmptyFolder => "Empty folder",
+                    RestoreClassification.ConflictNonEmpty => "Folder has files",
+                    _ => "Missing"
+                };
+            }
+        }
+
+        // Resource keys looked up by the converter in XAML.
+        public string StateBrushKey
+        {
+            get
+            {
+                switch (_state)
+                {
+                    case RestoreRowState.Done:
+                    case RestoreRowState.AlreadyCloned: return "SuccessBrush";
+                    case RestoreRowState.Failed: return "CriticalBrush";
+                    case RestoreRowState.Pending:
+                    case RestoreRowState.Quarantining:
+                    case RestoreRowState.Cloning: return "AccentBrush";
+                    case RestoreRowState.Skipped:
+                    case RestoreRowState.UnsafeExisting: return "WarningBrush";
+                }
+
+                return !HasValidUrl || Classification == RestoreClassification.ConflictNonEmpty
+                    ? "WarningBrush"
+                    : "AccentBrush";
+            }
+        }
+
+        public bool IsCloning => _state == RestoreRowState.Cloning;
+
+        /// <summary>True once the orchestrator has reached a terminal state for this row.</summary>
+        public bool IsFinished =>
+            _state == RestoreRowState.Done || _state == RestoreRowState.Failed
+            || _state == RestoreRowState.Skipped || _state == RestoreRowState.AlreadyCloned
+            || _state == RestoreRowState.UnsafeExisting;
+
+        /// <summary>Rows there is nothing to do for are drawn muted.</summary>
+        public bool IsDimmed => !IsRestorable;
 
         private double? _percent;
         public double? PercentComplete
         {
             get => _percent;
-            private set { _percent = value; OnPropertyChanged(); OnPropertyChanged(nameof(PercentDisplay)); }
+            private set
+            {
+                _percent = value;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(PercentDisplay));
+                OnPropertyChanged(nameof(PercentValue));
+                OnPropertyChanged(nameof(IsPercentUnknown));
+            }
         }
+
         public string PercentDisplay =>
-            _percent.HasValue ? ((int)Math.Round(_percent.Value)) + "%" : string.Empty;
+            IsCloning && _percent.HasValue ? ((int)Math.Round(_percent.Value)) + "%" : string.Empty;
+        public double PercentValue => _percent ?? 0;
+        public bool IsPercentUnknown => !_percent.HasValue;
 
         private string _detail;
         public string Detail
         {
             get => _detail;
-            private set { _detail = value ?? string.Empty; OnPropertyChanged(); }
-        }
-
-        private string _errorCode = string.Empty;
-        public string ErrorCode
-        {
-            get => _errorCode;
-            private set { _errorCode = value ?? string.Empty; OnPropertyChanged(); }
+            private set => Set(ref _detail, value ?? string.Empty);
         }
 
         private string _errorMessage = string.Empty;
         public string ErrorMessage
         {
             get => _errorMessage;
-            private set { _errorMessage = value ?? string.Empty; OnPropertyChanged(); OnPropertyChanged(nameof(HasError)); }
+            private set
+            {
+                if (Set(ref _errorMessage, value ?? string.Empty)) OnPropertyChanged(nameof(HasError));
+            }
         }
 
         public bool HasError => !string.IsNullOrEmpty(_errorMessage);
@@ -791,7 +760,10 @@ namespace ControlTower.Desktop.ViewModels
         public string QuarantinePath
         {
             get => _quarantinePath;
-            private set { _quarantinePath = value ?? string.Empty; OnPropertyChanged(); OnPropertyChanged(nameof(HasQuarantinePath)); }
+            private set
+            {
+                if (Set(ref _quarantinePath, value ?? string.Empty)) OnPropertyChanged(nameof(HasQuarantinePath));
+            }
         }
 
         public bool HasQuarantinePath => !string.IsNullOrEmpty(_quarantinePath);
@@ -799,21 +771,35 @@ namespace ControlTower.Desktop.ViewModels
         public void MarkPending()
         {
             if (!IsSelectable) return;
-            State = RestoreRowState.Pending;
             PercentComplete = null;
-            Detail = "Queued…";
-            ErrorCode = string.Empty;
+            Detail = "Waiting for its turn…";
             ErrorMessage = string.Empty;
+            State = RestoreRowState.Pending;
+        }
+
+        public void ResetIfPending()
+        {
+            if (_state != RestoreRowState.Pending) return;
+            Detail = Candidate.Detail ?? string.Empty;
+            State = RestoreRowState.Idle;
         }
 
         public void Apply(RestoreRowUpdate update)
         {
-            State = update.State;
             if (update.PercentComplete.HasValue) PercentComplete = update.PercentComplete;
-            if (!string.IsNullOrEmpty(update.Detail)) Detail = update.Detail;
             if (!string.IsNullOrEmpty(update.QuarantinePath)) QuarantinePath = update.QuarantinePath;
-            if (!string.IsNullOrEmpty(update.ErrorCode)) ErrorCode = update.ErrorCode;
-            if (!string.IsNullOrEmpty(update.ErrorMessage)) ErrorMessage = update.ErrorMessage;
+            if (update.State == RestoreRowState.Failed)
+            {
+                // The failure message is the detail; don't leave the last
+                // git progress line sitting above it.
+                Detail = string.Empty;
+                ErrorMessage = string.IsNullOrEmpty(update.ErrorMessage) ? "Restore failed." : update.ErrorMessage;
+            }
+            else if (!string.IsNullOrEmpty(update.Detail))
+            {
+                Detail = update.Detail;
+            }
+            State = update.State;
         }
 
         private static RestoreRowState MapInitialState(RestoreClassification c) => c switch
@@ -822,90 +808,6 @@ namespace ControlTower.Desktop.ViewModels
             RestoreClassification.UnsafeExisting => RestoreRowState.UnsafeExisting,
             _ => RestoreRowState.Idle
         };
-
-        private static RestoreAction DefaultActionFor(RestoreClassification c) => c switch
-        {
-            RestoreClassification.ConflictNonEmpty => RestoreAction.QuarantineAndClone,
-            _ => RestoreAction.Clone
-        };
-
-        private static string MapClassificationLabel(RestoreClassification c) => c switch
-        {
-            RestoreClassification.Missing => "Missing",
-            RestoreClassification.MissingNeedsUrl => "Missing — needs URL",
-            RestoreClassification.EmptyFolder => "Empty folder",
-            RestoreClassification.ConflictNonEmpty => "Conflict",
-            RestoreClassification.AlreadyCloned => "Already cloned",
-            RestoreClassification.UnsafeExisting => "Unsafe — manual review",
-            _ => c.ToString()
-        };
-
-        private static string MapStateLabel(RestoreRowState s) => s switch
-        {
-            RestoreRowState.Idle => "Ready",
-            RestoreRowState.Pending => "Pending",
-            RestoreRowState.Quarantining => "Quarantining",
-            RestoreRowState.Cloning => "Cloning",
-            RestoreRowState.Done => "Done",
-            RestoreRowState.Failed => "Failed",
-            RestoreRowState.Skipped => "Skipped",
-            RestoreRowState.AlreadyCloned => "Already cloned",
-            RestoreRowState.UnsafeExisting => "Unsafe",
-            _ => s.ToString()
-        };
-
-        // Resource keys looked up by the converter in XAML.
-        private static string MapStateBrushKey(RestoreRowState s) => s switch
-        {
-            RestoreRowState.Done => "SuccessBrush",
-            RestoreRowState.Failed => "CriticalBrush",
-            RestoreRowState.Quarantining => "SystemAccentColorBrush",
-            RestoreRowState.Cloning => "SystemAccentColorBrush",
-            RestoreRowState.Skipped => "WarningBrush",
-            RestoreRowState.AlreadyCloned => "SecondaryTextBrush",
-            RestoreRowState.UnsafeExisting => "WarningBrush",
-            _ => "SecondaryTextBrush"
-        };
-
-        // Mirrors the static check on RestoreOrchestrator / AsyncCloneService /
-        // RestoreProjectsViewModel. Kept private static to avoid coupling row VM
-        // to Infrastructure types.
-        internal static bool UrlCarriesCredentials(string url)
-        {
-            if (string.IsNullOrWhiteSpace(url)) return false;
-            if (Uri.TryCreate(url, UriKind.Absolute, out var uri))
-            {
-                if (string.IsNullOrEmpty(uri.UserInfo)) return false;
-                if (string.Equals(uri.Scheme, "ssh", StringComparison.OrdinalIgnoreCase))
-                    return uri.UserInfo.Contains(':');
-                return true;
-            }
-            return false;
-        }
-
-        /// <summary>
-        /// Lightweight syntactic check that the URL looks like one of the
-        /// forms <c>git clone</c> accepts: <c>https://…</c>, <c>http://…</c>,
-        /// <c>ssh://…</c>, <c>git://…</c>, <c>file://…</c>, or scp-like
-        /// <c>user@host:owner/repo</c>. Not a guarantee that the remote
-        /// exists — the clone itself is the final validation.
-        /// </summary>
-        internal static bool LooksLikeSupportedUrl(string url)
-        {
-            if (string.IsNullOrWhiteSpace(url)) return false;
-            if (Uri.TryCreate(url, UriKind.Absolute, out var uri))
-            {
-                var s = uri.Scheme;
-                return s == "https" || s == "http" || s == "ssh"
-                    || s == "git" || s == "file";
-            }
-
-            // scp-like: at least one '@' followed by 'host:' followed by something.
-            var at = url.IndexOf('@');
-            if (at <= 0) return false;
-            var colon = url.IndexOf(':', at);
-            return colon > at + 1 && colon < url.Length - 1;
-        }
     }
 
     public sealed class RestoreActionOption
