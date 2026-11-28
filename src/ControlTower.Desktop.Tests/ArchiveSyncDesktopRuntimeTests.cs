@@ -744,6 +744,51 @@ public sealed class ArchiveSyncDesktopRuntimeTests
         }
     }
 
+    [Fact]
+    public async Task LoadAsync_ArchiveStatusDetail_AppendsPersistedSourceSelectionNote_ForCurrentArchiveRoot()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "ct-archive-source-note-" + Guid.NewGuid().ToString("N"));
+        var archiveRoot = Path.Combine(root, "archive");
+        var sourceRoot = Path.Combine(root, "working-source");
+        const string projectId = "archive-main";
+        var archivePath = Path.Combine(archiveRoot, projectId);
+        var note = "Original upstream is unavailable; using the reachable configured fork source instead.";
+        Directory.CreateDirectory(Path.Combine(archivePath, ".git"));
+        Directory.CreateDirectory(sourceRoot);
+
+        try
+        {
+            var stateStore = new SpyArchiveStateStore();
+            stateStore.States[projectId] = new ArchiveRepoState
+            {
+                ProjectId = projectId,
+                ArchivePath = archivePath,
+                LastSyncedUtc = DateTime.UtcNow,
+                UpstreamStatus = ArchiveUpstreamStatus.Reachable,
+                ReleaseStatus = ArchiveReleaseStatus.NoCurrentRelease,
+                SourceSelectionNote = note
+            };
+
+            var viewModel = new MainViewModel(
+                CreateControlTowerServiceForReload(projectId, sourceRoot, "https://github.com/fork-owner/fork-repo.git"),
+                null, null, null)
+            {
+                ArchiveStateStore = stateStore,
+                ArchiveStorageRootPath = archiveRoot
+            };
+
+            await viewModel.LoadAsync();
+
+            var row = Assert.Single(viewModel.Projects, row => row.Id == projectId);
+            Assert.Contains("no current release", row.Project.ArchiveStatusDetail, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains(note, row.Project.ArchiveStatusDetail, StringComparison.Ordinal);
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
     [Theory]
     [InlineData(false, true)]
     [InlineData(true, true)]

@@ -18,7 +18,12 @@ namespace ControlTower.Core.Contracts
         /// <summary>
         /// Clones (first run) or fetches (subsequent runs) the full history
         /// of one archived project, then captures/verifies its latest
-        /// release. Safe to call even when the remote has disappeared: the
+        /// release. GitHub forks publishing a current release use their own
+        /// source and builds; confirmed release-less forks use their root
+        /// upstream when available, or keep archiving the reachable configured
+        /// fork when the original is confirmed unavailable. Other lookup
+        /// failures do not select a fallback source.
+        /// Safe to call even when the remote has disappeared: the
         /// existing local copy is left untouched and the failure is
         /// reported in the result + persisted state.
         /// </summary>
@@ -77,9 +82,9 @@ namespace ControlTower.Core.Contracts
         /// <summary>
         /// Resolves the root (non-fork) upstream repo for
         /// <paramref name="remoteUrl"/> when the release provider exposes that
-        /// relationship. Returns null when the remote isn't a supported fork, or
-        /// the lookup fails — callers then fall back to treating the remote as
-        /// its own source of truth.
+        /// relationship. Returns null for a confirmed non-fork or a remote
+        /// without supported fork semantics. Failed supported lookups throw
+        /// rather than selecting the configured remote as a fallback source.
         /// </summary>
         Task<ArchiveUpstreamRepo?> ResolveUpstreamAsync(
             string remoteUrl,

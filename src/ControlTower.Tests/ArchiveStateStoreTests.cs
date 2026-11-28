@@ -80,4 +80,32 @@ public class ArchiveStateStoreTests
             Directory.Delete(root, recursive: true);
         }
     }
+
+    [Fact]
+    public void SaveAndLoad_PreservesSourceSelectionNote()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "archive-state-source-note-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var store = new ArchiveStateStore(root);
+            var state = new ArchiveRepoState
+            {
+                ProjectId = "fork-project",
+                ArchivePath = Path.Combine(root, "archive", "fork-project"),
+                SourceSelectionNote = "Original upstream is unavailable; using the reachable configured fork source instead."
+            };
+
+            store.Save(state);
+            var loaded = store.Load(state.ProjectId);
+
+            Assert.Equal(state.SourceSelectionNote, loaded.SourceSelectionNote);
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
 }

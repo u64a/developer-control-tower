@@ -1,6 +1,7 @@
 #nullable enable
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Net;
 using System.Net.Http;
@@ -86,9 +87,8 @@ namespace ControlTower.Infrastructure.Archive
 
                 if (!response.IsSuccessStatusCode)
                 {
-                    throw new HttpRequestException(
-                        "Latest release lookup for " + repository.FullName +
-                        " returned HTTP " + (int)response.StatusCode + ".");
+                    throw CreateHttpError(
+                        response, repository, "Latest release lookup for " + repository.FullName);
                 }
 
                 var json = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
@@ -202,6 +202,11 @@ namespace ControlTower.Infrastructure.Archive
             }
         }
 
+        /// <summary>
+        /// Returns the root source of a GitHub fork, or null for a confirmed
+        /// non-fork or a remote without GitHub fork semantics. GitHub metadata
+        /// failures throw so callers cannot mistake them for a non-fork.
+        /// </summary>
         public async Task<ArchiveUpstreamRepo?> ResolveUpstreamAsync(string remoteUrl, CancellationToken ct)
         {
             if (!TryParseRepositoryTarget(remoteUrl, out var repository))
@@ -230,62 +235,74 @@ namespace ControlTower.Infrastructure.Archive
                     ct).ConfigureAwait(false);
                 if (!response.IsSuccessStatusCode)
                 {
-                    AppLogger.Warn(
-                        "Archive",
-                        "Upstream lookup for " + repository.FullName +
-                        " returned HTTP " + (int)response.StatusCode + ".");
-                    return null;
+                    throw CreateHttpError(
+                        response, repository, "Upstream lookup for " + repository.FullName);
                 }
 
                 var json = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
                 using var doc = JsonDocument.Parse(json);
                 var root = doc.RootElement;
 
-                var isFork = root.TryGetProperty("fork", out var forkEl) && forkEl.ValueKind == JsonValueKind.True;
-                if (!isFork)
+                if (root.ValueKind != JsonValueKind.Object ||
+                    !root.TryGetProperty("fork", out var forkEl) ||
+                    (forkEl.ValueKind != JsonValueKind.True && forkEl.ValueKind != JsonValueKind.False))
+                {
+                    throw new InvalidDataException(
+                        "GitHub upstream response for " + repository.FullName +
+                        " must be a JSON object containing a boolean fork flag.");
+                }
+
+                if (forkEl.ValueKind == JsonValueKind.False)
                 {
                     return null;
                 }
 
                 if (!root.TryGetProperty("source", out var sourceEl) || sourceEl.ValueKind != JsonValueKind.Object)
                 {
-                    AppLogger.Warn(
-                        "Archive",
+                    throw new InvalidDataException(
                         "GitHub fork response for " + repository.FullName + " did not contain its source repository.");
-                    return null;
                 }
 
-                var fullName = GetString(sourceEl, "full_name");
-                var cloneUrl = GetString(sourceEl, "clone_url");
-                var defaultBranch = GetString(sourceEl, "default_branch");
+                var context = "GitHub source repository for " + repository.FullName;
+                var fullName = GetRequiredString(sourceEl, "full_name", context);
+                var cloneUrl = GetRequiredString(sourceEl, "clone_url", context);
+                var defaultBranch = GetRequiredString(sourceEl, "default_branch", context);
                 if (!TryParseRepositoryTarget(cloneUrl, out var sourceRepository) ||
                     sourceRepository.Provider != ReleaseProvider.GitHub ||
                     !string.Equals(fullName, sourceRepository.FullName, StringComparison.OrdinalIgnoreCase))
                 {
-                    AppLogger.Warn(
-                        "Archive",
+                    throw new InvalidDataException(
                         "GitHub fork response for " + repository.FullName +
                         " contained an invalid source repository.");
-                    return null;
                 }
 
                 return new ArchiveUpstreamRepo(
                     sourceRepository.Owner,
                     sourceRepository.Repo,
                     cloneUrl,
-                    string.IsNullOrEmpty(defaultBranch) ? "main" : defaultBranch);
+                    defaultBranch);
             }
             catch (HttpRequestException ex)
             {
                 AppLogger.Warn("Archive", "Upstream lookup failed for " + repository.FullName + ": " + ex.Message);
-                return null;
+                throw;
             }
-            catch (JsonException ex)
+            catch (JsonException)
             {
-                AppLogger.Warn(
-                    "Archive",
-                    "Upstream lookup response could not be parsed for " + repository.FullName + ": " + ex.Message);
-                return null;
+                var message = "GitHub upstream response for " + repository.FullName + " is not valid JSON.";
+                AppLogger.Warn("Archive", message);
+                throw new InvalidDataException(message);
+            }
+            catch (InvalidDataException ex)
+            {
+                AppLogger.Warn("Archive", "Upstream lookup response is invalid: " + ex.Message);
+                throw;
+            }
+            catch (TaskCanceledException ex) when (!ct.IsCancellationRequested)
+            {
+                throw new HttpRequestException(
+                    "Upstream lookup for " + repository.FullName + " timed out. Retry the archive sync manually.",
+                    ex);
             }
             catch (TaskCanceledException) when (ct.IsCancellationRequested)
             {
@@ -441,6 +458,75 @@ namespace ControlTower.Infrastructure.Archive
             return request;
         }
 
+        private HttpRequestException CreateHttpError(
+            HttpResponseMessage response,
+            RepositoryTarget repository,
+            string context)
+        {
+            var message = context + " returned HTTP " + (int)response.StatusCode + ".";
+            if (repository.Provider == ReleaseProvider.GitHub &&
+                (response.StatusCode == HttpStatusCode.Forbidden ||
+                 response.StatusCode == HttpStatusCode.TooManyRequests))
+            {
+                var exhausted = false;
+                if (response.Headers.TryGetValues("X-RateLimit-Remaining", out var remainingValues))
+                {
+                    foreach (var value in remainingValues)
+                    {
+                        exhausted |= string.Equals(value.Trim(), "0", StringComparison.Ordinal);
+                    }
+                }
+
+                var retryAfter = response.Headers.RetryAfter;
+                var rateLimited = exhausted || retryAfter != null ||
+                    response.StatusCode == HttpStatusCode.TooManyRequests;
+                if (rateLimited)
+                {
+                    message += exhausted
+                        ? " GitHub API rate limit is exhausted."
+                        : " GitHub API requests are rate limited.";
+                    if (retryAfter?.Delta is TimeSpan delay && delay >= TimeSpan.Zero)
+                    {
+                        message += " Retry after at least " +
+                            delay.TotalSeconds.ToString("0", CultureInfo.InvariantCulture) + " seconds.";
+                    }
+                    else if (retryAfter?.Date is DateTimeOffset retryAt)
+                    {
+                        message += " Retry at or after " +
+                            retryAt.UtcDateTime.ToString("yyyy-MM-dd HH:mm:ss 'UTC'", CultureInfo.InvariantCulture) + ".";
+                    }
+
+                    if (exhausted && response.Headers.TryGetValues("X-RateLimit-Reset", out var resetValues))
+                    {
+                        foreach (var value in resetValues)
+                        {
+                            if (long.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var seconds) &&
+                                seconds >= 0 && seconds <= DateTimeOffset.MaxValue.ToUnixTimeSeconds())
+                            {
+                                message += " The primary rate limit resets at " +
+                                    DateTimeOffset.FromUnixTimeSeconds(seconds).UtcDateTime.ToString(
+                                        "yyyy-MM-dd HH:mm:ss 'UTC'", CultureInfo.InvariantCulture) + ".";
+                                break;
+                            }
+                        }
+                    }
+
+                    message += " Wait for the limit to clear, then retry the archive sync manually.";
+                    message += _gitHubToken == null
+                        ? " Configure Settings security.github_credential_target to reference a GitHub token in " +
+                          "Windows Credential Manager for authenticated API access and higher primary limits."
+                        : " Check the GitHub token referenced by Settings security.github_credential_target if the limit persists.";
+                }
+                else
+                {
+                    message += " GitHub API access is forbidden; check repository access and the GitHub token referenced by " +
+                        "Settings security.github_credential_target.";
+                }
+            }
+
+            return new HttpRequestException(message, null, response.StatusCode);
+        }
+
         private async Task<HttpResponseMessage> SendDownloadRequestAsync(Uri downloadUri, CancellationToken ct)
         {
             var currentUri = downloadUri;
@@ -586,10 +672,12 @@ namespace ControlTower.Infrastructure.Archive
                 ct).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
             {
-                throw new HttpRequestException(
+                throw CreateHttpError(
+                    response,
+                    repository,
                     "Could not confirm that " + repository.FullName +
                     " supports its release API after /releases/latest returned HTTP 404; " +
-                    "repository metadata returned HTTP " + (int)response.StatusCode + ".");
+                    "repository metadata");
             }
 
             try

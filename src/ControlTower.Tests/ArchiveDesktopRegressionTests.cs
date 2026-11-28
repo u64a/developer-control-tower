@@ -115,10 +115,31 @@ public class ArchiveDesktopRegressionTests
             "ViewModels",
             "MainViewModel.cs"));
 
-        Assert.Contains("project.ArchiveStatus = IsCurrentArchiveRoot(project, state)", code, StringComparison.Ordinal);
+        Assert.Contains("var isCurrentArchiveRoot = IsCurrentArchiveRoot(project, state);", code, StringComparison.Ordinal);
+        Assert.Contains("project.ArchiveStatus = isCurrentArchiveRoot", code, StringComparison.Ordinal);
         Assert.Contains(": \"Needs sync\";", code, StringComparison.Ordinal);
         Assert.Contains("Path.Combine(ArchiveStorageRootPath, projectId)", code, StringComparison.Ordinal);
         Assert.DoesNotContain("ArchiveStatus = \"Not configured\"", code, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void MainViewModel_ArchiveStatusDetail_AppendsSourceSelectionNote_OnlyForCurrentArchiveRoot()
+    {
+        var code = File.ReadAllText(Path.Combine(
+            GetRepositoryRoot(),
+            "src",
+            "ControlTower.Desktop",
+            "ViewModels",
+            "MainViewModel.cs"));
+
+        Assert.Contains(
+            "if (isCurrentArchiveRoot && !string.IsNullOrWhiteSpace(state.SourceSelectionNote))",
+            code,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "project.ArchiveStatusDetail + \" \" + state.SourceSelectionNote",
+            code,
+            StringComparison.Ordinal);
     }
 
     [Fact]

@@ -103,7 +103,8 @@ public class ArchiveSyncServiceTests
                 LastReleaseCapturedUtc = source.LastReleaseCapturedUtc,
                 LastReleaseDirectoryName = source.LastReleaseDirectoryName,
                 LastReleaseError = source.LastReleaseError,
-                UpstreamFullName = source.UpstreamFullName
+                UpstreamFullName = source.UpstreamFullName,
+                SourceSelectionNote = source.SourceSelectionNote
             };
 
             foreach (var path in source.PreviousArchivePaths)
@@ -125,6 +126,13 @@ public class ArchiveSyncServiceTests
         public ArchiveUpstreamRepo? UpstreamResult { get; set; }
         public ArchiveReleaseInfo? LatestReleaseResult { get; set; }
         public ArchiveReleaseIntegrity DownloadResult { get; set; } = ArchiveReleaseIntegrity.Verified;
+        public Exception? ResolveUpstreamException { get; set; }
+        public Func<CancellationToken, Exception?>? ResolveUpstreamExceptionFactory { get; set; }
+        public Action<ArchiveReleaseAsset, string>? OnDownload { get; set; }
+        public Dictionary<string, ArchiveReleaseInfo?> LatestReleaseResultsByUrl { get; } =
+            new(StringComparer.OrdinalIgnoreCase);
+        public Dictionary<string, Exception> LatestReleaseExceptionsByUrl { get; } =
+            new(StringComparer.OrdinalIgnoreCase);
         public List<string> ResolveUpstreamUrls { get; } = new();
         public List<string> LatestReleaseUrls { get; } = new();
         public List<(ArchiveReleaseAsset Asset, string DestinationPath)> Downloads { get; } = new();
@@ -132,6 +140,16 @@ public class ArchiveSyncServiceTests
         public Task<ArchiveReleaseInfo?> GetLatestReleaseAsync(string remoteUrl, CancellationToken ct)
         {
             LatestReleaseUrls.Add(remoteUrl);
+            if (LatestReleaseExceptionsByUrl.TryGetValue(remoteUrl, out var ex))
+            {
+                return Task.FromException<ArchiveReleaseInfo?>(ex);
+            }
+
+            if (LatestReleaseResultsByUrl.TryGetValue(remoteUrl, out var release))
+            {
+                return Task.FromResult(release);
+            }
+
             return Task.FromResult(LatestReleaseResult);
         }
 
@@ -141,12 +159,19 @@ public class ArchiveSyncServiceTests
             CancellationToken ct)
         {
             Downloads.Add((asset, destinationPath));
+            OnDownload?.Invoke(asset, destinationPath);
             return Task.FromResult(DownloadResult);
         }
 
         public Task<ArchiveUpstreamRepo?> ResolveUpstreamAsync(string remoteUrl, CancellationToken ct)
         {
             ResolveUpstreamUrls.Add(remoteUrl);
+            var exception = ResolveUpstreamExceptionFactory?.Invoke(ct) ?? ResolveUpstreamException;
+            if (exception != null)
+            {
+                return Task.FromException<ArchiveUpstreamRepo?>(exception);
+            }
+
             return Task.FromResult(UpstreamResult);
         }
     }
@@ -156,6 +181,12 @@ public class ArchiveSyncServiceTests
 
     private static GitRunResult Fail(int exitCode, string stderr) =>
         new(exitCode, string.Empty, stderr, TimeSpan.Zero, TimedOut: false, Cancelled: false);
+
+    private static GitRunResult TimedOut(string stderr) =>
+        new(124, string.Empty, stderr, TimeSpan.FromSeconds(30), TimedOut: true, Cancelled: false);
+
+    private static GitRunResult Cancelled(string stderr = "") =>
+        new(130, string.Empty, stderr, TimeSpan.Zero, TimedOut: false, Cancelled: true);
 
     private static ArchiveWorkingSourceInventory EmptyKnownSafeInventory() =>
         ArchiveWorkingSourceInventory.Complete(Array.Empty<ArchiveWorkingSource>());
@@ -955,7 +986,7 @@ public class ArchiveSyncServiceTests
 
                     if (args.Length >= 2 &&
                         args[0] == "fetch" &&
-                        args[1] == "--all")
+                        args[1] == "origin")
                     {
                         return Ok();
                     }
@@ -1186,12 +1217,13 @@ public class ArchiveSyncServiceTests
     }
 
     [Fact]
-    public async Task SyncAsync_ForkRemote_TracksResolvedUpstreamForSyncAndReleases()
+    public async Task SyncAsync_ForkRemote_WithoutOwnRelease_TracksResolvedUpstreamAndProbesForkFirst()
     {
         var root = Path.Combine(
             Path.GetTempPath(),
             "archive-root-fork-" + Guid.NewGuid().ToString("N"));
         var projectId = "forked-project";
+        var remote = "https://github.com/fork-owner/fork-repo.git";
         var archivePath = Path.Combine(Path.GetFullPath(root), projectId);
         Directory.CreateDirectory(Path.Combine(archivePath, ".git"));
 
@@ -1200,6 +1232,19 @@ public class ArchiveSyncServiceTests
             "upstream-repo",
             "https://github.com/upstream-owner/upstream-repo.git",
             "main");
+        var rootRelease = new ArchiveReleaseInfo(
+            "v2.0.0",
+            "v2.0.0",
+            "Root upstream release",
+            DateTime.UtcNow,
+            new[]
+            {
+                new ArchiveReleaseAsset(
+                    "root.zip",
+                    "https://downloads.example.test/root.zip",
+                    12,
+                    "abcd")
+            });
 
         try
         {
@@ -1219,7 +1264,7 @@ public class ArchiveSyncServiceTests
 
                     if (args.Length >= 3 && args[0] == "remote" && args[1] == "get-url" && args[2] == "origin")
                     {
-                        return Ok("https://github.com/fork-owner/fork-repo.git\n");
+                        return Ok(remote + "\n");
                     }
 
                     if (args.Length >= 4 && args[0] == "remote" && args[1] == "add" && args[2] == "upstream")
@@ -1255,14 +1300,18 @@ public class ArchiveSyncServiceTests
             var releases = new FakeArchiveReleaseClient
             {
                 UpstreamResult = upstream,
-                LatestReleaseResult = null
+                LatestReleaseResultsByUrl =
+                {
+                    [remote] = null,
+                    [upstream.CloneUrl] = rootRelease
+                }
             };
 
             var service = new ArchiveSyncService(git, clone, state, releases);
             var result = await service.SyncAsync(
                 new ArchiveSyncRequest(
                     projectId,
-                    "https://github.com/fork-owner/fork-repo.git",
+                    remote,
                     root,
                     EmptyKnownSafeInventory()),
                 progress: null,
@@ -1271,14 +1320,1288 @@ public class ArchiveSyncServiceTests
             Assert.Equal(ArchiveSyncStatus.Succeeded, result.Status);
             Assert.Empty(clone.Requests);
             Assert.Single(releases.ResolveUpstreamUrls);
-            Assert.Single(releases.LatestReleaseUrls);
-            Assert.Equal(upstream.CloneUrl, releases.LatestReleaseUrls[0]);
+            Assert.Equal(new[] { remote, upstream.CloneUrl }, releases.LatestReleaseUrls);
+            Assert.Single(releases.Downloads);
+            Assert.Equal("root.zip", releases.Downloads[0].Asset.Name);
             Assert.NotNull(state.LastSaved);
             Assert.Equal("upstream-owner/upstream-repo", state.LastSaved!.UpstreamFullName);
+            Assert.Equal("v2.0.0", state.LastSaved.LastReleaseTag);
+            Assert.True(string.IsNullOrWhiteSpace(state.LastSaved.SourceSelectionNote));
             Assert.Contains(git.Calls, call =>
                 call.Arguments.Length >= 2 &&
                 call.Arguments[0] == "fetch" &&
                 call.Arguments[1] == "upstream");
+            Assert.DoesNotContain(git.Calls, call =>
+                call.Arguments.Length >= 2 &&
+                call.Arguments[0] == "fetch" &&
+                call.Arguments[1] == "origin");
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
+    [Fact]
+    public async Task SyncAsync_ForkRemote_WithOwnRelease_UsesOriginOnlyAndSkipsOriginalProbe()
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            "archive-root-fork-own-release-" + Guid.NewGuid().ToString("N"));
+        var projectId = "fork-own-release-project";
+        var remote = "https://github.com/fork-owner/fork-repo.git";
+        var archivePath = Path.Combine(Path.GetFullPath(root), projectId);
+        Directory.CreateDirectory(Path.Combine(archivePath, ".git"));
+
+        var upstream = new ArchiveUpstreamRepo(
+            "upstream-owner",
+            "upstream-repo",
+            "https://github.com/upstream-owner/upstream-repo.git",
+            "main");
+        var forkRelease = new ArchiveReleaseInfo(
+            "v3.1.0",
+            "v3.1.0",
+            "Fork-owned release",
+            DateTime.UtcNow,
+            new[]
+            {
+                new ArchiveReleaseAsset("fork-win.zip", "https://downloads.example.test/fork-win.zip", 10, "sha1"),
+                new ArchiveReleaseAsset("fork-linux.tar.gz", "https://downloads.example.test/fork-linux.tar.gz", 20, null)
+            });
+
+        try
+        {
+            var git = new FakeGitProcessAdapter
+            {
+                Handler = (args, _) =>
+                {
+                    if (args.Length > 0 && args[0] == "ls-remote")
+                    {
+                        return Ok("abc\trefs/heads/main\n");
+                    }
+
+                    if (args.Length >= 3 &&
+                        args[0] == "remote" &&
+                        args[1] == "get-url" &&
+                        args[2] == "origin")
+                    {
+                        return Ok(remote + "\n");
+                    }
+
+                    if (args.Length >= 2 && args[0] == "fetch" && args[1] == "origin")
+                    {
+                        return Ok();
+                    }
+
+                    if (args.Length >= 2 && args[0] == "symbolic-ref" && args[1] == "refs/remotes/origin/HEAD")
+                    {
+                        return Ok("refs/remotes/origin/main\n");
+                    }
+
+                    if (args.Length >= 2 && args[0] == "checkout" && args[1] == "main")
+                    {
+                        return Ok();
+                    }
+
+                    if (args.Length >= 3 && args[0] == "reset" && args[1] == "--hard" && args[2] == "origin/main")
+                    {
+                        return Ok();
+                    }
+
+                    if (args.Length >= 2 && args[0] == "rev-parse" && args[1] == "HEAD")
+                    {
+                        return Ok("forksha\n");
+                    }
+
+                    throw new InvalidOperationException("Unexpected git command: " + string.Join(" ", args));
+                }
+            };
+            var clone = new FakeCloneService();
+            var state = new FakeStateStore();
+            state.States[projectId] = new ArchiveRepoState
+            {
+                ProjectId = projectId,
+                ArchivePath = archivePath,
+                UpstreamFullName = "upstream-owner/upstream-repo",
+                LastReleaseTag = "old",
+                LastReleaseDirectoryName = "old"
+            };
+            var releases = new FakeArchiveReleaseClient
+            {
+                UpstreamResult = upstream,
+                LatestReleaseResultsByUrl =
+                {
+                    [remote] = forkRelease
+                }
+            };
+            var service = new ArchiveSyncService(git, clone, state, releases);
+
+            var result = await service.SyncAsync(
+                new ArchiveSyncRequest(
+                    projectId,
+                    remote,
+                    root,
+                    EmptyKnownSafeInventory()),
+                progress: null,
+                CancellationToken.None);
+
+            Assert.Equal(ArchiveSyncStatus.Succeeded, result.Status);
+            Assert.Single(releases.ResolveUpstreamUrls);
+            Assert.Equal(new[] { remote }, releases.LatestReleaseUrls);
+            Assert.Equal(
+                new[] { "fork-win.zip", "fork-linux.tar.gz" },
+                releases.Downloads.Select(download => download.Asset.Name).ToArray());
+            Assert.NotNull(state.LastSaved);
+            Assert.Equal(string.Empty, state.LastSaved!.UpstreamFullName);
+            Assert.Equal("v3.1.0", state.LastSaved.LastReleaseTag);
+            Assert.False(string.IsNullOrWhiteSpace(state.LastSaved.SourceSelectionNote));
+            Assert.Equal(ArchiveUpstreamStatus.Reachable, state.LastSaved.UpstreamStatus);
+            Assert.Equal(string.Empty, state.LastSaved.LastError);
+            Assert.Contains(git.Calls, call =>
+                call.Arguments.Length >= 2 &&
+                call.Arguments[0] == "fetch" &&
+                call.Arguments[1] == "origin");
+            Assert.DoesNotContain(git.Calls, call =>
+                call.Arguments.Length >= 2 &&
+                call.Arguments[0] == "fetch" &&
+                call.Arguments[1] == "upstream");
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
+    [Fact]
+    public async Task SyncAsync_ForkRemote_SourceChangedFromRootToFork_RecapturesSameTagAndAssetPayload()
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            "archive-root-fork-provenance-recapture-" + Guid.NewGuid().ToString("N"));
+        var projectId = "fork-provenance-recapture-project";
+        var remote = "https://github.com/fork-owner/fork-repo.git";
+        var archivePath = Path.Combine(Path.GetFullPath(root), projectId);
+        var releasePath = Path.Combine(archivePath, "releases", "v1");
+        var payloadPath = Path.Combine(releasePath, "app.zip");
+        var previousCapture = new DateTime(2026, 7, 1, 0, 0, 0, DateTimeKind.Utc);
+        var oldPayload = new byte[] { 1, 2, 3, 4 };
+        var newPayload = new byte[] { 9, 8, 7, 6 };
+
+        Directory.CreateDirectory(Path.Combine(archivePath, ".git"));
+        Directory.CreateDirectory(releasePath);
+        File.WriteAllBytes(payloadPath, oldPayload);
+
+        var upstream = new ArchiveUpstreamRepo(
+            "upstream-owner",
+            "upstream-repo",
+            "https://github.com/upstream-owner/upstream-repo.git",
+            "main");
+        var forkRelease = new ArchiveReleaseInfo(
+            "v1",
+            "v1",
+            "Fork-owned release with same tag/name as previous root capture",
+            DateTime.UtcNow,
+            new[]
+            {
+                new ArchiveReleaseAsset("app.zip", "https://downloads.example.test/fork/app.zip", 4, null)
+            });
+
+        try
+        {
+            var git = new FakeGitProcessAdapter
+            {
+                Handler = (args, _) =>
+                {
+                    if (args.Length > 0 && args[0] == "ls-remote")
+                    {
+                        return Ok("abc\trefs/heads/main\n");
+                    }
+
+                    if (args.Length >= 3 &&
+                        args[0] == "remote" &&
+                        args[1] == "get-url" &&
+                        args[2] == "origin")
+                    {
+                        return Ok(remote + "\n");
+                    }
+
+                    if (args.Length >= 2 && args[0] == "fetch" && args[1] == "origin")
+                    {
+                        return Ok();
+                    }
+
+                    if (args.Length >= 2 && args[0] == "symbolic-ref" && args[1] == "refs/remotes/origin/HEAD")
+                    {
+                        return Ok("refs/remotes/origin/main\n");
+                    }
+
+                    if (args.Length >= 2 && args[0] == "checkout" && args[1] == "main")
+                    {
+                        return Ok();
+                    }
+
+                    if (args.Length >= 3 && args[0] == "reset" && args[1] == "--hard" && args[2] == "origin/main")
+                    {
+                        return Ok();
+                    }
+
+                    if (args.Length >= 2 && args[0] == "rev-parse" && args[1] == "HEAD")
+                    {
+                        return Ok("forksha\n");
+                    }
+
+                    throw new InvalidOperationException("Unexpected git command: " + string.Join(" ", args));
+                }
+            };
+            var clone = new FakeCloneService();
+            var state = new FakeStateStore();
+            state.States[projectId] = new ArchiveRepoState
+            {
+                ProjectId = projectId,
+                ArchivePath = archivePath,
+                UpstreamFullName = "upstream-owner/upstream-repo",
+                ReleaseStatus = ArchiveReleaseStatus.Captured,
+                LastReleaseTag = "v1",
+                LastReleaseIntegrity = ArchiveReleaseIntegrity.Verified,
+                LastReleaseCapturedUtc = previousCapture,
+                LastReleaseDirectoryName = "v1"
+            };
+            state.States[projectId].LastReleaseAssetNames.Add("app.zip");
+
+            var releases = new FakeArchiveReleaseClient
+            {
+                UpstreamResult = upstream,
+                LatestReleaseResultsByUrl =
+                {
+                    [remote] = forkRelease
+                },
+                OnDownload = (_, destinationPath) =>
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(destinationPath)!);
+                    File.WriteAllBytes(destinationPath, newPayload);
+                }
+            };
+            var service = new ArchiveSyncService(git, clone, state, releases);
+
+            var result = await service.SyncAsync(
+                new ArchiveSyncRequest(
+                    projectId,
+                    remote,
+                    root,
+                    EmptyKnownSafeInventory()),
+                progress: null,
+                CancellationToken.None);
+
+            Assert.Equal(ArchiveSyncStatus.Succeeded, result.Status);
+            Assert.Equal(new[] { remote }, releases.LatestReleaseUrls);
+            Assert.Single(releases.Downloads);
+            Assert.Equal("app.zip", releases.Downloads[0].Asset.Name);
+            Assert.Equal(newPayload, File.ReadAllBytes(payloadPath));
+            Assert.NotEqual(oldPayload, File.ReadAllBytes(payloadPath));
+            Assert.NotNull(state.LastSaved);
+            Assert.Equal(string.Empty, state.LastSaved!.UpstreamFullName);
+            Assert.Equal(ArchiveReleaseStatus.Captured, state.LastSaved.ReleaseStatus);
+            Assert.Equal("v1", state.LastSaved.LastReleaseTag);
+            Assert.Equal(new[] { "app.zip" }, state.LastSaved.LastReleaseAssetNames);
+            Assert.Contains(git.Calls, call =>
+                call.Arguments.Length >= 2 &&
+                call.Arguments[0] == "fetch" &&
+                call.Arguments[1] == "origin");
+            Assert.DoesNotContain(git.Calls, call =>
+                call.Arguments.Length >= 2 &&
+                call.Arguments[0] == "fetch" &&
+                call.Arguments[1] == "upstream");
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task SyncAsync_ForkRemote_UpstreamLookupFailure_FailsAndPreservesPreviousEvidenceWithoutFallbackOrReleaseLookup(bool networkFailure)
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            "archive-root-fork-upstream-failure-" + Guid.NewGuid().ToString("N"));
+        var projectId = "fork-upstream-failure-project";
+        var remote = "https://github.com/fork-owner/fork-repo.git";
+        var archivePath = Path.Combine(Path.GetFullPath(root), projectId);
+        var previousCapture = new DateTime(2026, 7, 1, 0, 0, 0, DateTimeKind.Utc);
+        Directory.CreateDirectory(Path.Combine(archivePath, ".git"));
+
+        try
+        {
+            var git = new FakeGitProcessAdapter
+            {
+                Handler = (args, _) =>
+                {
+                    if (args.Length > 0 && args[0] == "ls-remote")
+                    {
+                        return Ok("abc\trefs/heads/main\n");
+                    }
+
+                    if (args.Length >= 3 &&
+                        args[0] == "remote" &&
+                        args[1] == "get-url" &&
+                        args[2] == "origin")
+                    {
+                        return Ok(remote + "\n");
+                    }
+
+                    throw new InvalidOperationException("Unexpected git command: " + string.Join(" ", args));
+                }
+            };
+            var clone = new FakeCloneService();
+            var state = new FakeStateStore();
+            var previousState = new ArchiveRepoState
+            {
+                ProjectId = projectId,
+                ArchivePath = archivePath,
+                UpstreamFullName = "upstream-owner/upstream-repo",
+                ReleaseStatus = ArchiveReleaseStatus.Captured,
+                LastReleaseTag = "v9.9.9",
+                LastReleaseIntegrity = ArchiveReleaseIntegrity.Verified,
+                LastReleaseCapturedUtc = previousCapture,
+                LastReleaseDirectoryName = "v9.9.9",
+                LastSyncedCommitSha = "prevsha"
+            };
+            previousState.LastReleaseAssetNames.Add("existing.zip");
+            state.States[projectId] = previousState;
+
+            var releases = new FakeArchiveReleaseClient
+            {
+                ResolveUpstreamException = networkFailure
+                    ? new HttpRequestException("network unreachable")
+                    : new InvalidDataException("GitHub fork response metadata was incomplete.")
+            };
+            var service = new ArchiveSyncService(git, clone, state, releases);
+
+            var result = await service.SyncAsync(
+                new ArchiveSyncRequest(
+                    projectId,
+                    remote,
+                    root,
+                    EmptyKnownSafeInventory()),
+                progress: null,
+                CancellationToken.None);
+
+            Assert.Equal(ArchiveSyncStatus.Failed, result.Status);
+            Assert.StartsWith("Archive source selection failed:", result.Message, StringComparison.Ordinal);
+            Assert.Contains(
+                networkFailure ? "network unreachable" : "metadata was incomplete",
+                result.Message,
+                StringComparison.OrdinalIgnoreCase);
+            Assert.Single(releases.ResolveUpstreamUrls);
+            Assert.Empty(releases.LatestReleaseUrls);
+            Assert.Empty(releases.Downloads);
+
+            Assert.NotNull(state.LastSaved);
+            Assert.StartsWith("Archive source selection failed:", state.LastSaved!.LastError, StringComparison.Ordinal);
+            Assert.Equal("upstream-owner/upstream-repo", state.LastSaved.UpstreamFullName);
+            Assert.Equal(ArchiveReleaseStatus.Captured, state.LastSaved.ReleaseStatus);
+            Assert.Equal("v9.9.9", state.LastSaved.LastReleaseTag);
+            Assert.Equal(ArchiveReleaseIntegrity.Verified, state.LastSaved.LastReleaseIntegrity);
+            Assert.Equal(previousCapture, state.LastSaved.LastReleaseCapturedUtc);
+            Assert.Equal("v9.9.9", state.LastSaved.LastReleaseDirectoryName);
+            Assert.Equal(new[] { "existing.zip" }, state.LastSaved.LastReleaseAssetNames);
+
+            Assert.DoesNotContain(git.Calls, call =>
+                call.Arguments.Length > 0 &&
+                string.Equals(call.Arguments[0], "fetch", StringComparison.Ordinal));
+            Assert.DoesNotContain(git.Calls, call =>
+                call.Arguments.Length >= 2 &&
+                call.Arguments[0] == "checkout" &&
+                call.Arguments[1] == "-B");
+            Assert.DoesNotContain(git.Calls, call =>
+                call.Arguments.Length >= 2 &&
+                call.Arguments[0] == "rev-parse" &&
+                call.Arguments[1] == "HEAD");
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
+    [Fact]
+    public async Task SyncAsync_ForkRemote_ForkReleaseLookupFailure_FailsWithoutFallbackAndPreservesEvidence()
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            "archive-root-fork-release-lookup-failure-" + Guid.NewGuid().ToString("N"));
+        var projectId = "fork-release-lookup-failure-project";
+        var remote = "https://github.com/fork-owner/fork-repo.git";
+        var archivePath = Path.Combine(Path.GetFullPath(root), projectId);
+        Directory.CreateDirectory(Path.Combine(archivePath, ".git"));
+        var previousCapture = new DateTime(2026, 7, 1, 0, 0, 0, DateTimeKind.Utc);
+        var upstream = new ArchiveUpstreamRepo(
+            "upstream-owner",
+            "upstream-repo",
+            "https://github.com/upstream-owner/upstream-repo.git",
+            "main");
+
+        try
+        {
+            var git = new FakeGitProcessAdapter
+            {
+                Handler = (args, _) =>
+                {
+                    if (args.Length > 0 && args[0] == "ls-remote")
+                    {
+                        return Ok("abc\trefs/heads/main\n");
+                    }
+
+                    if (args.Length >= 3 &&
+                        args[0] == "remote" &&
+                        args[1] == "get-url" &&
+                        args[2] == "origin")
+                    {
+                        return Ok(remote + "\n");
+                    }
+
+                    throw new InvalidOperationException("Unexpected git command: " + string.Join(" ", args));
+                }
+            };
+            var clone = new FakeCloneService();
+            var state = new FakeStateStore();
+            state.States[projectId] = new ArchiveRepoState
+            {
+                ProjectId = projectId,
+                ArchivePath = archivePath,
+                UpstreamFullName = "upstream-owner/upstream-repo",
+                ReleaseStatus = ArchiveReleaseStatus.Captured,
+                LastReleaseTag = "v9.9.9",
+                LastReleaseIntegrity = ArchiveReleaseIntegrity.Verified,
+                LastReleaseCapturedUtc = previousCapture,
+                LastReleaseDirectoryName = "v9.9.9",
+                SourceSelectionNote = "previous selection note"
+            };
+            state.States[projectId].LastReleaseAssetNames.Add("existing.zip");
+
+            var forkReleaseError = new HttpRequestException(
+                "Fork latest-release lookup returned HTTP 429.",
+                null,
+                HttpStatusCode.TooManyRequests);
+            var releases = new FakeArchiveReleaseClient
+            {
+                UpstreamResult = upstream,
+                LatestReleaseExceptionsByUrl =
+                {
+                    [remote] = forkReleaseError
+                }
+            };
+            var service = new ArchiveSyncService(git, clone, state, releases);
+
+            var result = await service.SyncAsync(
+                new ArchiveSyncRequest(
+                    projectId,
+                    remote,
+                    root,
+                    EmptyKnownSafeInventory()),
+                progress: null,
+                CancellationToken.None);
+
+            Assert.Equal(ArchiveSyncStatus.Failed, result.Status);
+            Assert.StartsWith("Archive source selection failed:", result.Message, StringComparison.Ordinal);
+            Assert.Contains("429", result.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Single(releases.ResolveUpstreamUrls);
+            Assert.Equal(new[] { remote }, releases.LatestReleaseUrls);
+            Assert.Empty(releases.Downloads);
+            Assert.NotNull(state.LastSaved);
+            Assert.Equal(result.Message, state.LastSaved!.LastError);
+            Assert.Equal("upstream-owner/upstream-repo", state.LastSaved.UpstreamFullName);
+            Assert.Equal(ArchiveReleaseStatus.Captured, state.LastSaved.ReleaseStatus);
+            Assert.Equal("v9.9.9", state.LastSaved.LastReleaseTag);
+            Assert.Equal(previousCapture, state.LastSaved.LastReleaseCapturedUtc);
+            Assert.Equal(new[] { "existing.zip" }, state.LastSaved.LastReleaseAssetNames);
+            Assert.Equal("previous selection note", state.LastSaved.SourceSelectionNote);
+            Assert.DoesNotContain(git.Calls, call =>
+                call.Arguments.Length > 0 &&
+                string.Equals(call.Arguments[0], "fetch", StringComparison.Ordinal));
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.NotFound)]
+    [InlineData(HttpStatusCode.Gone)]
+    [InlineData(HttpStatusCode.UnavailableForLegalReasons)]
+    public async Task SyncAsync_ForkRemote_OriginalApiUnavailableAndForkHasNoRelease_PreservesHistoricalCaptureAndPayload(
+        HttpStatusCode unavailableStatus)
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            "archive-root-fork-root-unavailable-" + Guid.NewGuid().ToString("N"));
+        var projectId = "fork-root-unavailable-project";
+        var remote = "https://github.com/fork-owner/fork-repo.git";
+        var archivePath = Path.Combine(Path.GetFullPath(root), projectId);
+        var previousCapture = new DateTime(2026, 7, 1, 0, 0, 0, DateTimeKind.Utc);
+        var previousReleaseDir = Path.Combine(archivePath, "releases", "v9.9.9");
+        var previousPayload = Path.Combine(previousReleaseDir, "previous.zip");
+        Directory.CreateDirectory(Path.Combine(archivePath, ".git"));
+        Directory.CreateDirectory(previousReleaseDir);
+        File.WriteAllText(previousPayload, "previous release payload");
+
+        var upstream = new ArchiveUpstreamRepo(
+            "upstream-owner",
+            "upstream-repo",
+            "https://github.com/upstream-owner/upstream-repo.git",
+            "main");
+
+        try
+        {
+            var git = new FakeGitProcessAdapter
+            {
+                Handler = (args, _) =>
+                {
+                    if (args.Length >= 4 &&
+                        args[0] == "ls-remote" &&
+                        args[1] == "--heads" &&
+                        args[2] == "--" &&
+                        string.Equals(args[3], remote, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return Ok("abc\trefs/heads/main\n");
+                    }
+
+                    if (args.Length >= 3 &&
+                        args[0] == "remote" &&
+                        args[1] == "get-url" &&
+                        args[2] == "origin")
+                    {
+                        return Ok(remote + "\n");
+                    }
+
+                    if (args.Length >= 2 && args[0] == "fetch" && args[1] == "origin")
+                    {
+                        return Ok();
+                    }
+
+                    if (args.Length >= 2 && args[0] == "symbolic-ref" && args[1] == "refs/remotes/origin/HEAD")
+                    {
+                        return Ok("refs/remotes/origin/main\n");
+                    }
+
+                    if (args.Length >= 2 && args[0] == "checkout" && args[1] == "main")
+                    {
+                        return Ok();
+                    }
+
+                    if (args.Length >= 3 && args[0] == "reset" && args[1] == "--hard" && args[2] == "origin/main")
+                    {
+                        return Ok();
+                    }
+
+                    if (args.Length >= 2 && args[0] == "rev-parse" && args[1] == "HEAD")
+                    {
+                        return Ok("forksha\n");
+                    }
+
+                    throw new InvalidOperationException("Unexpected git command: " + string.Join(" ", args));
+                }
+            };
+            var clone = new FakeCloneService();
+            var state = new FakeStateStore();
+            state.States[projectId] = new ArchiveRepoState
+            {
+                ProjectId = projectId,
+                ArchivePath = archivePath,
+                UpstreamFullName = "upstream-owner/upstream-repo",
+                ReleaseStatus = ArchiveReleaseStatus.Captured,
+                LastReleaseTag = "v9.9.9",
+                LastReleaseIntegrity = ArchiveReleaseIntegrity.Verified,
+                LastReleaseCapturedUtc = previousCapture,
+                LastReleaseDirectoryName = "v9.9.9"
+            };
+            state.States[projectId].LastReleaseAssetNames.Add("previous.zip");
+
+            var releases = new FakeArchiveReleaseClient
+            {
+                UpstreamResult = upstream,
+                LatestReleaseResultsByUrl =
+                {
+                    [remote] = null
+                },
+                LatestReleaseExceptionsByUrl =
+                {
+                    [upstream.CloneUrl] = new HttpRequestException(
+                        "Original latest-release lookup returned HTTP " + (int)unavailableStatus + ".",
+                        null,
+                        unavailableStatus)
+                }
+            };
+            var service = new ArchiveSyncService(git, clone, state, releases);
+
+            var result = await service.SyncAsync(
+                new ArchiveSyncRequest(
+                    projectId,
+                    remote,
+                    root,
+                    EmptyKnownSafeInventory()),
+                progress: null,
+                CancellationToken.None);
+
+            Assert.Equal(ArchiveSyncStatus.Succeeded, result.Status);
+            Assert.Contains("no current release", result.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(new[] { remote, upstream.CloneUrl }, releases.LatestReleaseUrls);
+            Assert.Empty(releases.Downloads);
+            Assert.NotNull(state.LastSaved);
+            Assert.Equal(ArchiveReleaseStatus.NoCurrentRelease, state.LastSaved!.ReleaseStatus);
+            Assert.Equal("v9.9.9", state.LastSaved.LastReleaseTag);
+            Assert.Equal(ArchiveReleaseIntegrity.Verified, state.LastSaved.LastReleaseIntegrity);
+            Assert.Equal(previousCapture, state.LastSaved.LastReleaseCapturedUtc);
+            Assert.Equal("v9.9.9", state.LastSaved.LastReleaseDirectoryName);
+            Assert.Equal(new[] { "previous.zip" }, state.LastSaved.LastReleaseAssetNames);
+            Assert.Equal("previous release payload", File.ReadAllText(previousPayload));
+            Assert.Equal(string.Empty, state.LastSaved.LastError);
+            Assert.Equal(ArchiveUpstreamStatus.Reachable, state.LastSaved.UpstreamStatus);
+            Assert.Equal(string.Empty, state.LastSaved.UpstreamFullName);
+            Assert.False(string.IsNullOrWhiteSpace(state.LastSaved.SourceSelectionNote));
+            Assert.Contains(git.Calls, call =>
+                call.Arguments.Length >= 2 &&
+                call.Arguments[0] == "fetch" &&
+                call.Arguments[1] == "origin");
+            Assert.DoesNotContain(git.Calls, call =>
+                call.Arguments.Length >= 2 &&
+                call.Arguments[0] == "fetch" &&
+                call.Arguments[1] == "upstream");
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.Unauthorized)]
+    [InlineData(HttpStatusCode.Forbidden)]
+    [InlineData(HttpStatusCode.TooManyRequests)]
+    [InlineData(HttpStatusCode.InternalServerError)]
+    public async Task SyncAsync_ForkRemote_OriginalApiFailureOutsideUnavailableStatuses_FailsWithoutFallback(
+        HttpStatusCode status)
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            "archive-root-fork-original-api-failure-" + Guid.NewGuid().ToString("N"));
+        var projectId = "fork-original-api-failure-project";
+        var remote = "https://github.com/fork-owner/fork-repo.git";
+        var archivePath = Path.Combine(Path.GetFullPath(root), projectId);
+        var previousCapture = new DateTime(2026, 7, 1, 0, 0, 0, DateTimeKind.Utc);
+        Directory.CreateDirectory(Path.Combine(archivePath, ".git"));
+
+        var upstream = new ArchiveUpstreamRepo(
+            "upstream-owner",
+            "upstream-repo",
+            "https://github.com/upstream-owner/upstream-repo.git",
+            "main");
+
+        try
+        {
+            var git = new FakeGitProcessAdapter
+            {
+                Handler = (args, _) =>
+                {
+                    if (args.Length > 0 && args[0] == "ls-remote")
+                    {
+                        return Ok("abc\trefs/heads/main\n");
+                    }
+
+                    if (args.Length >= 3 &&
+                        args[0] == "remote" &&
+                        args[1] == "get-url" &&
+                        args[2] == "origin")
+                    {
+                        return Ok(remote + "\n");
+                    }
+
+                    throw new InvalidOperationException("Unexpected git command: " + string.Join(" ", args));
+                }
+            };
+            var clone = new FakeCloneService();
+            var state = new FakeStateStore();
+            state.States[projectId] = new ArchiveRepoState
+            {
+                ProjectId = projectId,
+                ArchivePath = archivePath,
+                UpstreamFullName = "upstream-owner/upstream-repo",
+                ReleaseStatus = ArchiveReleaseStatus.Captured,
+                LastReleaseTag = "v9.9.9",
+                LastReleaseIntegrity = ArchiveReleaseIntegrity.Verified,
+                LastReleaseCapturedUtc = previousCapture,
+                LastReleaseDirectoryName = "v9.9.9"
+            };
+            state.States[projectId].LastReleaseAssetNames.Add("existing.zip");
+
+            var releases = new FakeArchiveReleaseClient
+            {
+                UpstreamResult = upstream,
+                LatestReleaseResultsByUrl =
+                {
+                    [remote] = null
+                },
+                LatestReleaseExceptionsByUrl =
+                {
+                    [upstream.CloneUrl] = new HttpRequestException(
+                        "Original latest-release lookup returned HTTP " + (int)status + ".",
+                        null,
+                        status)
+                }
+            };
+            var service = new ArchiveSyncService(git, clone, state, releases);
+
+            var result = await service.SyncAsync(
+                new ArchiveSyncRequest(
+                    projectId,
+                    remote,
+                    root,
+                    EmptyKnownSafeInventory()),
+                progress: null,
+                CancellationToken.None);
+
+            Assert.Equal(ArchiveSyncStatus.Failed, result.Status);
+            Assert.StartsWith("Archive source selection failed:", result.Message, StringComparison.Ordinal);
+            Assert.Contains(((int)status).ToString(), result.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(new[] { remote, upstream.CloneUrl }, releases.LatestReleaseUrls);
+            Assert.Empty(releases.Downloads);
+            Assert.NotNull(state.LastSaved);
+            Assert.Equal("upstream-owner/upstream-repo", state.LastSaved!.UpstreamFullName);
+            Assert.Equal(ArchiveReleaseStatus.Captured, state.LastSaved.ReleaseStatus);
+            Assert.Equal("v9.9.9", state.LastSaved.LastReleaseTag);
+            Assert.Equal(previousCapture, state.LastSaved.LastReleaseCapturedUtc);
+            Assert.Equal(new[] { "existing.zip" }, state.LastSaved.LastReleaseAssetNames);
+            Assert.DoesNotContain(git.Calls, call =>
+                call.Arguments.Length > 0 &&
+                string.Equals(call.Arguments[0], "fetch", StringComparison.Ordinal));
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
+    [Fact]
+    public async Task SyncAsync_ForkRemote_RootRemoteCheckTimedOutWithRepositoryNotFoundText_FailsWithoutFallback()
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            "archive-root-fork-root-timeout-" + Guid.NewGuid().ToString("N"));
+        var projectId = "fork-root-timeout-project";
+        var remote = "https://github.com/fork-owner/fork-repo.git";
+        var archivePath = Path.Combine(Path.GetFullPath(root), projectId);
+        var previousCapture = new DateTime(2026, 7, 1, 0, 0, 0, DateTimeKind.Utc);
+        Directory.CreateDirectory(Path.Combine(archivePath, ".git"));
+
+        var upstream = new ArchiveUpstreamRepo(
+            "upstream-owner",
+            "upstream-repo",
+            "https://github.com/upstream-owner/upstream-repo.git",
+            "main");
+
+        try
+        {
+            var git = new FakeGitProcessAdapter
+            {
+                Handler = (args, _) =>
+                {
+                    if (args.Length >= 4 &&
+                        args[0] == "ls-remote" &&
+                        args[1] == "--heads" &&
+                        args[2] == "--" &&
+                        string.Equals(args[3], remote, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return Ok("abc\trefs/heads/main\n");
+                    }
+
+                    if (args.Length >= 4 &&
+                        args[0] == "ls-remote" &&
+                        args[1] == "--heads" &&
+                        args[2] == "--" &&
+                        string.Equals(args[3], upstream.CloneUrl, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return TimedOut("fatal: repository not found");
+                    }
+
+                    if (args.Length >= 3 &&
+                        args[0] == "remote" &&
+                        args[1] == "get-url" &&
+                        args[2] == "origin")
+                    {
+                        return Ok(remote + "\n");
+                    }
+
+                    throw new InvalidOperationException("Unexpected git command: " + string.Join(" ", args));
+                }
+            };
+            var clone = new FakeCloneService();
+            var state = new FakeStateStore();
+            state.States[projectId] = new ArchiveRepoState
+            {
+                ProjectId = projectId,
+                ArchivePath = archivePath,
+                UpstreamFullName = "upstream-owner/upstream-repo",
+                ReleaseStatus = ArchiveReleaseStatus.Captured,
+                LastReleaseTag = "v9.9.9",
+                LastReleaseIntegrity = ArchiveReleaseIntegrity.Verified,
+                LastReleaseCapturedUtc = previousCapture,
+                LastReleaseDirectoryName = "v9.9.9"
+            };
+            state.States[projectId].LastReleaseAssetNames.Add("existing.zip");
+
+            var releases = new FakeArchiveReleaseClient
+            {
+                UpstreamResult = upstream,
+                LatestReleaseResultsByUrl =
+                {
+                    [remote] = null,
+                    [upstream.CloneUrl] = null
+                }
+            };
+            var service = new ArchiveSyncService(git, clone, state, releases);
+
+            var result = await service.SyncAsync(
+                new ArchiveSyncRequest(
+                    projectId,
+                    remote,
+                    root,
+                    EmptyKnownSafeInventory()),
+                progress: null,
+                CancellationToken.None);
+
+            Assert.Equal(ArchiveSyncStatus.Failed, result.Status);
+            Assert.StartsWith("Archive source selection failed:", result.Message, StringComparison.Ordinal);
+            Assert.Contains("timed out", result.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(new[] { remote, upstream.CloneUrl }, releases.LatestReleaseUrls);
+            Assert.Empty(releases.Downloads);
+            Assert.NotNull(state.LastSaved);
+            Assert.Equal("upstream-owner/upstream-repo", state.LastSaved!.UpstreamFullName);
+            Assert.Equal(ArchiveReleaseStatus.Captured, state.LastSaved.ReleaseStatus);
+            Assert.Equal("v9.9.9", state.LastSaved.LastReleaseTag);
+            Assert.Equal(previousCapture, state.LastSaved.LastReleaseCapturedUtc);
+            Assert.Equal(new[] { "existing.zip" }, state.LastSaved.LastReleaseAssetNames);
+            Assert.DoesNotContain(git.Calls, call =>
+                call.Arguments.Length >= 2 &&
+                call.Arguments[0] == "fetch" &&
+                call.Arguments[1] == "origin");
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
+    [Fact]
+    public async Task SyncAsync_ForkRemote_UpstreamFetchTimedOutWithRepositoryNotFoundText_FailsWithoutFallback()
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            "archive-root-fork-upstream-fetch-timeout-" + Guid.NewGuid().ToString("N"));
+        var projectId = "fork-upstream-fetch-timeout-project";
+        var remote = "https://github.com/fork-owner/fork-repo.git";
+        var archivePath = Path.Combine(Path.GetFullPath(root), projectId);
+        var previousCapture = new DateTime(2026, 7, 1, 0, 0, 0, DateTimeKind.Utc);
+        Directory.CreateDirectory(Path.Combine(archivePath, ".git"));
+
+        var upstream = new ArchiveUpstreamRepo(
+            "upstream-owner",
+            "upstream-repo",
+            "https://github.com/upstream-owner/upstream-repo.git",
+            "main");
+
+        try
+        {
+            var git = new FakeGitProcessAdapter
+            {
+                Handler = (args, _) =>
+                {
+                    if (args.Length >= 4 &&
+                        args[0] == "ls-remote" &&
+                        args[1] == "--heads" &&
+                        args[2] == "--")
+                    {
+                        return Ok("abc\trefs/heads/main\n");
+                    }
+
+                    if (args.Length >= 3 &&
+                        args[0] == "remote" &&
+                        args[1] == "get-url" &&
+                        args[2] == "origin")
+                    {
+                        return Ok(remote + "\n");
+                    }
+
+                    if (args.Length >= 3 &&
+                        args[0] == "remote" &&
+                        args[1] == "get-url" &&
+                        args[2] == "upstream")
+                    {
+                        return Fail(2, "no such remote");
+                    }
+
+                    if (args.Length >= 4 && args[0] == "remote" && args[1] == "add" && args[2] == "upstream")
+                    {
+                        return Ok();
+                    }
+
+                    if (args.Length >= 2 && args[0] == "fetch" && args[1] == "upstream")
+                    {
+                        return TimedOut("fatal: repository not found");
+                    }
+
+                    throw new InvalidOperationException("Unexpected git command: " + string.Join(" ", args));
+                }
+            };
+            var clone = new FakeCloneService();
+            var state = new FakeStateStore();
+            state.States[projectId] = new ArchiveRepoState
+            {
+                ProjectId = projectId,
+                ArchivePath = archivePath,
+                UpstreamFullName = "upstream-owner/upstream-repo",
+                ReleaseStatus = ArchiveReleaseStatus.Captured,
+                LastReleaseTag = "v9.9.9",
+                LastReleaseIntegrity = ArchiveReleaseIntegrity.Verified,
+                LastReleaseCapturedUtc = previousCapture,
+                LastReleaseDirectoryName = "v9.9.9"
+            };
+            state.States[projectId].LastReleaseAssetNames.Add("existing.zip");
+
+            var releases = new FakeArchiveReleaseClient
+            {
+                UpstreamResult = upstream,
+                LatestReleaseResultsByUrl =
+                {
+                    [remote] = null,
+                    [upstream.CloneUrl] = null
+                }
+            };
+            var service = new ArchiveSyncService(git, clone, state, releases);
+
+            var result = await service.SyncAsync(
+                new ArchiveSyncRequest(
+                    projectId,
+                    remote,
+                    root,
+                    EmptyKnownSafeInventory()),
+                progress: null,
+                CancellationToken.None);
+
+            Assert.Equal(ArchiveSyncStatus.Failed, result.Status);
+            Assert.Contains("timed out", result.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(new[] { remote, upstream.CloneUrl }, releases.LatestReleaseUrls);
+            Assert.Empty(releases.Downloads);
+            Assert.NotNull(state.LastSaved);
+            Assert.Equal("upstream-owner/upstream-repo", state.LastSaved!.UpstreamFullName);
+            Assert.Equal(ArchiveReleaseStatus.Captured, state.LastSaved.ReleaseStatus);
+            Assert.Equal("v9.9.9", state.LastSaved.LastReleaseTag);
+            Assert.Equal(previousCapture, state.LastSaved.LastReleaseCapturedUtc);
+            Assert.Equal(new[] { "existing.zip" }, state.LastSaved.LastReleaseAssetNames);
+            Assert.DoesNotContain(git.Calls, call =>
+                call.Arguments.Length >= 2 &&
+                call.Arguments[0] == "fetch" &&
+                call.Arguments[1] == "origin");
+            Assert.DoesNotContain(git.Calls, call =>
+                call.Arguments.Length >= 2 &&
+                call.Arguments[0] == "checkout" &&
+                call.Arguments[1] == "-B");
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
+    [Fact]
+    public async Task SyncAsync_ForkRemote_UpstreamCheckoutRepositoryNotFoundError_FailsWithoutFallback()
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            "archive-root-fork-upstream-checkout-error-" + Guid.NewGuid().ToString("N"));
+        var projectId = "fork-upstream-checkout-error-project";
+        var remote = "https://github.com/fork-owner/fork-repo.git";
+        var archivePath = Path.Combine(Path.GetFullPath(root), projectId);
+        var previousCapture = new DateTime(2026, 7, 1, 0, 0, 0, DateTimeKind.Utc);
+        Directory.CreateDirectory(Path.Combine(archivePath, ".git"));
+
+        var upstream = new ArchiveUpstreamRepo(
+            "upstream-owner",
+            "upstream-repo",
+            "https://github.com/upstream-owner/upstream-repo.git",
+            "main");
+
+        try
+        {
+            var git = new FakeGitProcessAdapter
+            {
+                Handler = (args, _) =>
+                {
+                    if (args.Length >= 4 &&
+                        args[0] == "ls-remote" &&
+                        args[1] == "--heads" &&
+                        args[2] == "--")
+                    {
+                        return Ok("abc\trefs/heads/main\n");
+                    }
+
+                    if (args.Length >= 3 &&
+                        args[0] == "remote" &&
+                        args[1] == "get-url" &&
+                        args[2] == "origin")
+                    {
+                        return Ok(remote + "\n");
+                    }
+
+                    if (args.Length >= 3 &&
+                        args[0] == "remote" &&
+                        args[1] == "get-url" &&
+                        args[2] == "upstream")
+                    {
+                        return Fail(2, "no such remote");
+                    }
+
+                    if (args.Length >= 4 && args[0] == "remote" && args[1] == "add" && args[2] == "upstream")
+                    {
+                        return Ok();
+                    }
+
+                    if (args.Length >= 2 && args[0] == "fetch" && args[1] == "upstream")
+                    {
+                        return Ok();
+                    }
+
+                    if (args.Length >= 2 && args[0] == "checkout" && args[1] == "-B")
+                    {
+                        return Fail(1, "fatal: repository not found");
+                    }
+
+                    throw new InvalidOperationException("Unexpected git command: " + string.Join(" ", args));
+                }
+            };
+            var clone = new FakeCloneService();
+            var state = new FakeStateStore();
+            state.States[projectId] = new ArchiveRepoState
+            {
+                ProjectId = projectId,
+                ArchivePath = archivePath,
+                UpstreamFullName = "upstream-owner/upstream-repo",
+                ReleaseStatus = ArchiveReleaseStatus.Captured,
+                LastReleaseTag = "v9.9.9",
+                LastReleaseIntegrity = ArchiveReleaseIntegrity.Verified,
+                LastReleaseCapturedUtc = previousCapture,
+                LastReleaseDirectoryName = "v9.9.9"
+            };
+            state.States[projectId].LastReleaseAssetNames.Add("existing.zip");
+
+            var releases = new FakeArchiveReleaseClient
+            {
+                UpstreamResult = upstream,
+                LatestReleaseResultsByUrl =
+                {
+                    [remote] = null,
+                    [upstream.CloneUrl] = null
+                }
+            };
+            var service = new ArchiveSyncService(git, clone, state, releases);
+
+            var result = await service.SyncAsync(
+                new ArchiveSyncRequest(
+                    projectId,
+                    remote,
+                    root,
+                    EmptyKnownSafeInventory()),
+                progress: null,
+                CancellationToken.None);
+
+            Assert.Equal(ArchiveSyncStatus.Failed, result.Status);
+            Assert.Contains("repository not found", result.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(new[] { remote, upstream.CloneUrl }, releases.LatestReleaseUrls);
+            Assert.Empty(releases.Downloads);
+            Assert.NotNull(state.LastSaved);
+            Assert.Equal("upstream-owner/upstream-repo", state.LastSaved!.UpstreamFullName);
+            Assert.Equal(ArchiveReleaseStatus.Captured, state.LastSaved.ReleaseStatus);
+            Assert.Equal("v9.9.9", state.LastSaved.LastReleaseTag);
+            Assert.Equal(previousCapture, state.LastSaved.LastReleaseCapturedUtc);
+            Assert.Equal(new[] { "existing.zip" }, state.LastSaved.LastReleaseAssetNames);
+            Assert.DoesNotContain(git.Calls, call =>
+                call.Arguments.Length >= 2 &&
+                call.Arguments[0] == "fetch" &&
+                call.Arguments[1] == "origin");
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
+    [Fact]
+    public async Task SyncAsync_ForkRemote_RootRemoteCheckCancelled_PropagatesCancellationWithoutFallback()
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            "archive-root-fork-root-cancelled-" + Guid.NewGuid().ToString("N"));
+        var projectId = "fork-root-cancelled-project";
+        var remote = "https://github.com/fork-owner/fork-repo.git";
+        var archivePath = Path.Combine(Path.GetFullPath(root), projectId);
+        using var cancellation = new CancellationTokenSource();
+        Directory.CreateDirectory(Path.Combine(archivePath, ".git"));
+
+        var upstream = new ArchiveUpstreamRepo(
+            "upstream-owner",
+            "upstream-repo",
+            "https://github.com/upstream-owner/upstream-repo.git",
+            "main");
+
+        try
+        {
+            var git = new FakeGitProcessAdapter
+            {
+                Handler = (args, _) =>
+                {
+                    if (args.Length >= 4 &&
+                        args[0] == "ls-remote" &&
+                        args[1] == "--heads" &&
+                        args[2] == "--" &&
+                        string.Equals(args[3], remote, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return Ok("abc\trefs/heads/main\n");
+                    }
+
+                    if (args.Length >= 4 &&
+                        args[0] == "ls-remote" &&
+                        args[1] == "--heads" &&
+                        args[2] == "--" &&
+                        string.Equals(args[3], upstream.CloneUrl, StringComparison.OrdinalIgnoreCase))
+                    {
+                        cancellation.Cancel();
+                        return Cancelled("repository not found");
+                    }
+
+                    if (args.Length >= 3 &&
+                        args[0] == "remote" &&
+                        args[1] == "get-url" &&
+                        args[2] == "origin")
+                    {
+                        return Ok(remote + "\n");
+                    }
+
+                    throw new InvalidOperationException("Unexpected git command: " + string.Join(" ", args));
+                }
+            };
+            var clone = new FakeCloneService();
+            var state = new FakeStateStore();
+            state.States[projectId] = new ArchiveRepoState
+            {
+                ProjectId = projectId,
+                ArchivePath = archivePath,
+                ReleaseStatus = ArchiveReleaseStatus.Captured,
+                LastReleaseTag = "v9.9.9"
+            };
+            var releases = new FakeArchiveReleaseClient
+            {
+                UpstreamResult = upstream,
+                LatestReleaseResultsByUrl =
+                {
+                    [remote] = null,
+                    [upstream.CloneUrl] = null
+                }
+            };
+            var service = new ArchiveSyncService(git, clone, state, releases);
+
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+                service.SyncAsync(
+                    new ArchiveSyncRequest(
+                        projectId,
+                        remote,
+                        root,
+                        EmptyKnownSafeInventory()),
+                    progress: null,
+                    cancellation.Token));
+
+            Assert.Equal(0, state.SaveCalls);
+            Assert.Equal(new[] { remote, upstream.CloneUrl }, releases.LatestReleaseUrls);
+            Assert.DoesNotContain(git.Calls, call =>
+                call.Arguments.Length >= 2 &&
+                call.Arguments[0] == "fetch" &&
+                call.Arguments[1] == "origin");
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
+    [Fact]
+    public async Task SyncAsync_ForkRemote_UpstreamLookupCancellation_PropagatesAndStopsWithoutFallback()
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            "archive-root-fork-upstream-cancel-" + Guid.NewGuid().ToString("N"));
+        var projectId = "fork-upstream-cancel-project";
+        var remote = "https://github.com/fork-owner/fork-repo.git";
+        var archivePath = Path.Combine(Path.GetFullPath(root), projectId);
+        using var cancellation = new CancellationTokenSource();
+        Directory.CreateDirectory(Path.Combine(archivePath, ".git"));
+
+        try
+        {
+            var git = new FakeGitProcessAdapter
+            {
+                Handler = (args, _) =>
+                {
+                    if (args.Length > 0 && args[0] == "ls-remote")
+                    {
+                        return Ok("abc\trefs/heads/main\n");
+                    }
+
+                    if (args.Length >= 3 &&
+                        args[0] == "remote" &&
+                        args[1] == "get-url" &&
+                        args[2] == "origin")
+                    {
+                        return Ok(remote + "\n");
+                    }
+
+                    throw new InvalidOperationException("Unexpected git command: " + string.Join(" ", args));
+                }
+            };
+            var clone = new FakeCloneService();
+            var state = new FakeStateStore();
+            state.States[projectId] = new ArchiveRepoState
+            {
+                ProjectId = projectId,
+                ArchivePath = archivePath,
+                UpstreamFullName = "upstream-owner/upstream-repo",
+                ReleaseStatus = ArchiveReleaseStatus.Captured,
+                LastReleaseTag = "v9.9.9"
+            };
+
+            var releases = new FakeArchiveReleaseClient
+            {
+                ResolveUpstreamExceptionFactory = ct => new OperationCanceledException(ct)
+            };
+            var service = new ArchiveSyncService(git, clone, state, releases);
+
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+                service.SyncAsync(
+                    new ArchiveSyncRequest(
+                        projectId,
+                        remote,
+                        root,
+                        EmptyKnownSafeInventory()),
+                    progress: null,
+                    cancellation.Token));
+
+            Assert.Single(releases.ResolveUpstreamUrls);
+            Assert.Empty(releases.LatestReleaseUrls);
+            Assert.Empty(releases.Downloads);
+            Assert.Equal(0, state.SaveCalls);
+            Assert.DoesNotContain(git.Calls, call =>
+                call.Arguments.Length > 0 &&
+                string.Equals(call.Arguments[0], "fetch", StringComparison.Ordinal));
         }
         finally
         {

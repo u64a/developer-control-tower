@@ -82,6 +82,21 @@ only shows as "Blocked"/status row text you can act on. Leaving the setting
 blank uses `%USERPROFILE%\DeveloperControlTower\Archive`; it does not disable
 archiving or use the profile directory itself.
 
+GitHub forks publishing their own current release use the configured fork's
+source and release assets. A fork confirmed to have no current release uses
+its original root upstream's source and releases when available. Only confirmed
+original-upstream unavailability (HTTP 404, 410, or 451, or a narrowly recognized
+Git repository-unavailable result) permits using the reachable configured fork
+instead. "Unavailable" does not establish why a repository cannot be reached.
+Authentication failures (401/403), rate limits, malformed metadata, timeouts,
+and checkout/setup errors remain visible and never silently select a fallback.
+
+Refresh fetches only the selected source, so a stale inaccessible upstream
+remote cannot block a configured-fork refresh. Switching the selected source
+forces release assets to be captured again even when the tag and asset names
+match an earlier capture. When the configured fork is selected, the explanation
+is saved locally and displayed only for the archive under the current root.
+
 For supported public HTTPS remotes, archive sync asks GitHub or a
 Forgejo-compatible host for its single current/latest release and captures
 every attached asset from that one release. This includes all platform and
@@ -92,6 +107,14 @@ represented as verified. A configured GitHub credential is sent only to
 GitHub's own HTTPS endpoints, never to Forgejo or external asset hosts,
 including after redirects.
 
+GitHub API authentication uses the token referenced by
+`security.github_credential_target` in Settings, stored in Windows Credential
+Manager; signing in to `gh` does not configure this app's API token. GitHub
+403/429 errors use response headers to distinguish access refusal from rate
+limiting, with retry/reset guidance when supplied. Wait for a limit to clear
+and retry sync manually; for access refusal, check repository access and the
+configured credential target. Neither error silently switches archive sources.
+
 Archive rows distinguish the source clone from release capture: **Needs sync**
 means the current-root clone is absent; **Archived** means the clone and every
 current-release asset are present; **No current release** is a confirmed
@@ -101,6 +124,9 @@ provider result; and **Release unsupported**, **Release incomplete**, or
 **Unverifiable** release is still captured, with its missing provider checksum
 called out in the detail text.
 Source-refresh failures remain visible separately from earlier release errors.
+Existing release backups and recorded capture metadata are retained even when
+the selected source has no current release; unavailable remotes never trigger
+automatic deletion of archive copies.
 
 Changing the root refreshes status only. It never moves, deletes, or syncs
 existing archive data. A project whose old copy lives elsewhere is shown as
