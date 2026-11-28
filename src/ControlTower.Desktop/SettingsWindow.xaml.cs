@@ -11,6 +11,7 @@ using System.Windows.Media;
 using ControlTower.Core.Appearance;
 using ControlTower.Core.Contracts;
 using ControlTower.Core.Models;
+using ControlTower.Core.UseCases;
 using ControlTower.Desktop.Bootstrap;
 using ControlTower.Infrastructure.Configuration;
 using ControlTower.Infrastructure.Credentials;
@@ -211,11 +212,15 @@ namespace ControlTower.Desktop
             {
                 var dialog = new RestoreProjectsDialog(
                     _restoreServices.PortfolioProvider,
-                    _restoreServices.ProjectProvider,
-                    _restoreServices.StoreProvider,
+                    new RestoreInputBuilder(
+                        _restoreServices.PortfolioProvider,
+                        _restoreServices.ProjectProvider,
+                        _restoreServices.StoreProvider,
+                        _restoreServices.ProjectMetadataLocator,
+                        _restoreServices.SnapshotStore,
+                        _restoreServices.ProfileState.ActiveProfile),
                     _restoreServices.MissingProjectScanner,
-                    _restoreServices.RestoreOrchestrator,
-                    _restoreServices.ProfileState.ActiveProfile)
+                    _restoreServices.RestoreOrchestrator)
                 {
                     Owner = this
                 };

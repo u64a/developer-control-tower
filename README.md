@@ -267,6 +267,22 @@ preferences, cache, and logs live under
 `%LOCALAPPDATA%\DeveloperControlTower`. Credentials remain in Windows
 Credential Manager.
 
+### Restoring projects after a rebuild
+
+**Settings → Restore from Git…** re-clones registered projects whose local
+folder is missing. It lists only projects that need attention (already-cloned
+ones are hidden behind a toggle), fills in each origin URL from the portfolio,
+and lets you correct or paste one before restoring. Nothing is deleted: a
+folder that is in the way is moved to quarantine first, and only when you
+choose that for the row.
+
+So that a rebuilt machine still knows where to clone from, the app saves each
+repository's origin into `portfolio.yml` (`remote_url`) when a scan of a local
+clone finds one and none is recorded yet. Only that field is written, only when
+it is blank, and URLs with embedded credentials are never stored. A project
+that has never been scanned while cloned has no recorded origin, so Restore
+asks for its URL.
+
 Uninstalling from Windows Settings removes only the app and preserves all data.
 The in-app uninstall flow can instead remove:
 

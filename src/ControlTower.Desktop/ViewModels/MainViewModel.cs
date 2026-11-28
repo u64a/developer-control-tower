@@ -1533,8 +1533,21 @@ namespace ControlTower.Desktop.ViewModels
                 }
             }
 
+            RememberScannedOrigins();
             _lastScanText = "last scan " + DateTime.Now.ToString("HH:mm");
             OnPropertyChanged("PortfolioSummaryLine");
+        }
+
+        // Scans only record origins in the per-machine cache. Copy any new
+        // ones into portfolio.yml so Restore from Git still knows where to
+        // clone from after this machine is rebuilt.
+        private void RememberScannedOrigins()
+        {
+            var remembered = _service.RememberScannedOrigins();
+            if (remembered > 0)
+            {
+                AppLogger.Info("Portfolio", $"Saved {remembered} scanned origin URL(s) to portfolio.yml.");
+            }
         }
 
         /// <summary>
@@ -2693,6 +2706,7 @@ namespace ControlTower.Desktop.ViewModels
 
             StatusMessage = "Refreshed " + targets.Count + " selected project" +
                 (targets.Count == 1 ? string.Empty : "s") + " (local).";
+            RememberScannedOrigins();
             _lastScanText = "last scan " + DateTime.Now.ToString("HH:mm");
             OnPropertyChanged("PortfolioSummaryLine");
         }
