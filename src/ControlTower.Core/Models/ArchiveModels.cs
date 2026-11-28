@@ -139,17 +139,19 @@ namespace ControlTower.Core.Models
         /// <summary>
         /// "owner/repo" of the root (non-fork) upstream this archive's local
         /// branch and captured release track, when the remote is a GitHub
-        /// fork. Empty when the remote isn't a fork (archive tracks its own
-        /// remote instead).
+        /// fork without its own current release. Empty when the archive
+        /// tracks the configured remote's own source and releases.
         /// </summary>
         public string UpstreamFullName { get; set; } = string.Empty;
+
+        /// <summary>Why the configured fork was selected instead of its root upstream.</summary>
+        public string SourceSelectionNote { get; set; } = string.Empty;
     }
 
     /// <summary>
     /// The root (non-fork) hosted repo a fork descends from, when exposed by
-    /// its release provider. Used so an archived fork's local clone tracks
-    /// the original project's default branch and releases instead of the
-    /// (never-pushed-to) fork remote.
+    /// its release provider. Archived forks without their own current release
+    /// use this repository's default branch and releases.
     /// </summary>
     public sealed record ArchiveUpstreamRepo(string Owner, string Repo, string CloneUrl, string DefaultBranch)
     {

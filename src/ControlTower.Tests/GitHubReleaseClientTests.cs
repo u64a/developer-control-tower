@@ -94,6 +94,131 @@ public class GitHubReleaseClientTests
         Assert.Equal("Bearer test-github-token", request.Authorization);
     }
 
+    [Fact]
+    public async Task ResolveUpstreamAsync_GitHub_NonForkRepository_ReturnsNull()
+    {
+        using var handler = new ReleaseHttpHandler((_, _) => Task.FromResult(
+            new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("""{"fork":false}""")
+            }));
+        using var client = new GitHubReleaseClient(handler, "test-github-token");
+
+        var upstream = await client.ResolveUpstreamAsync("https://github.com/org/repo.git", CancellationToken.None);
+
+        Assert.Null(upstream);
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal("https://api.github.com/repos/org/repo", request.Uri.AbsoluteUri);
+    }
+
+    [Theory]
+    [InlineData("https://forge.example.test/org/repo.git")]
+    [InlineData("https://dev.azure.com/org/project/_git/repo")]
+    public async Task ResolveUpstreamAsync_UnsupportedOrNonGitHubRemote_ReturnsNullWithoutSendingRequest(string remote)
+    {
+        using var handler = new ReleaseHttpHandler((_, _) =>
+            throw new InvalidOperationException("Only supported GitHub remotes should be requested."));
+        using var client = new GitHubReleaseClient(handler, "test-github-token");
+
+        var upstream = await client.ResolveUpstreamAsync(remote, CancellationToken.None);
+
+        Assert.Null(upstream);
+        Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
+    public async Task ResolveUpstreamAsync_GitHub_ForbiddenWithRateLimitHeaders_ThrowsActionableRateLimitError()
+    {
+        var resetEpochSeconds = DateTimeOffset.UtcNow.AddMinutes(15).ToUnixTimeSeconds();
+        using var handler = new ReleaseHttpHandler((_, _) =>
+        {
+            var response = new HttpResponseMessage(HttpStatusCode.Forbidden);
+            response.Headers.TryAddWithoutValidation("X-RateLimit-Remaining", "0");
+            response.Headers.TryAddWithoutValidation("X-RateLimit-Reset", resetEpochSeconds.ToString());
+            return Task.FromResult(response);
+        });
+        using var client = new GitHubReleaseClient(handler, "test-github-token");
+
+        var ex = await Assert.ThrowsAsync<HttpRequestException>(() =>
+            client.ResolveUpstreamAsync("https://github.com/user/fork.git", CancellationToken.None));
+
+        Assert.Equal(HttpStatusCode.Forbidden, ex.StatusCode);
+        Assert.Contains("rate", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("limit", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ResolveUpstreamAsync_GitHub_TooManyRequests_ThrowsActionableRateLimitError()
+    {
+        using var handler = new ReleaseHttpHandler((_, _) => Task.FromResult(
+            new HttpResponseMessage(HttpStatusCode.TooManyRequests)));
+        using var client = new GitHubReleaseClient(handler, "test-github-token");
+
+        var ex = await Assert.ThrowsAsync<HttpRequestException>(() =>
+            client.ResolveUpstreamAsync("https://github.com/user/fork.git", CancellationToken.None));
+
+        Assert.Equal(HttpStatusCode.TooManyRequests, ex.StatusCode);
+        Assert.Contains("429", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("rate", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("limit", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ResolveUpstreamAsync_GitHub_ForbiddenWithoutRateLimitHeaders_DoesNotClaimRateLimiting()
+    {
+        using var handler = new ReleaseHttpHandler((_, _) => Task.FromResult(
+            new HttpResponseMessage(HttpStatusCode.Forbidden)));
+        using var client = new GitHubReleaseClient(handler, "test-github-token");
+
+        var ex = await Assert.ThrowsAsync<HttpRequestException>(() =>
+            client.ResolveUpstreamAsync("https://github.com/user/fork.git", CancellationToken.None));
+
+        Assert.Equal(HttpStatusCode.Forbidden, ex.StatusCode);
+        Assert.Contains("403", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("rate limit", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData("""{"fork":"true"}""")]
+    [InlineData("""{"fork":true}""")]
+    [InlineData("""{"fork":true,"source":{"full_name":"upstream/original","clone_url":"https://github.com/upstream/original.git"}}""")]
+    [InlineData("""{"fork":true,"source":{"full_name":"upstream/original","clone_url":"https://github.com/upstream/original.git","default_branch":""}}""")]
+    public async Task ResolveUpstreamAsync_GitHub_MalformedForkMetadata_ThrowsInvalidDataException(string json)
+    {
+        using var handler = new ReleaseHttpHandler((_, _) => Task.FromResult(
+            new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(json) }));
+        using var client = new GitHubReleaseClient(handler, "test-github-token");
+
+        await Assert.ThrowsAsync<InvalidDataException>(() =>
+            client.ResolveUpstreamAsync("https://github.com/user/fork.git", CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task ResolveUpstreamAsync_GitHub_NetworkFailure_ThrowsHttpRequestException()
+    {
+        using var handler = new ReleaseHttpHandler((_, _) =>
+            throw new HttpRequestException("network unreachable"));
+        using var client = new GitHubReleaseClient(handler, "test-github-token");
+
+        var ex = await Assert.ThrowsAsync<HttpRequestException>(() =>
+            client.ResolveUpstreamAsync("https://github.com/user/fork.git", CancellationToken.None));
+
+        Assert.Contains("network", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ResolveUpstreamAsync_GitHub_Timeout_ThrowsHttpRequestException()
+    {
+        using var handler = new ReleaseHttpHandler((_, _) =>
+            throw new TaskCanceledException("socket timeout"));
+        using var client = new GitHubReleaseClient(handler, "test-github-token");
+
+        var ex = await Assert.ThrowsAsync<HttpRequestException>(() =>
+            client.ResolveUpstreamAsync("https://github.com/user/fork.git", CancellationToken.None));
+
+        Assert.Contains("timed out", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     [Theory]
     [InlineData("http://forge.example.test/org/repo.git")]
     [MemberData(nameof(UrlsWithEmbeddedCredentials), "https://forge.example.test/org/repo.git")]

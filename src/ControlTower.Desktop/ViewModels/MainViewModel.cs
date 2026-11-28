@@ -1557,10 +1557,17 @@ namespace ControlTower.Desktop.ViewModels
             }
 
             var state = ArchiveStateStore.Load(project.Id);
-            project.ArchiveStatus = IsCurrentArchiveRoot(project, state)
+            var isCurrentArchiveRoot = IsCurrentArchiveRoot(project, state);
+            project.ArchiveStatus = isCurrentArchiveRoot
                 ? DescribeArchiveStatus(state)
                 : "Needs sync";
             project.ArchiveStatusDetail = DescribeArchiveStatusDetail(project, state);
+            if (isCurrentArchiveRoot && !string.IsNullOrWhiteSpace(state.SourceSelectionNote))
+            {
+                project.ArchiveStatusDetail = string.IsNullOrWhiteSpace(project.ArchiveStatusDetail)
+                    ? state.SourceSelectionNote
+                    : project.ArchiveStatusDetail + " " + state.SourceSelectionNote;
+            }
         }
 
         /// <summary>

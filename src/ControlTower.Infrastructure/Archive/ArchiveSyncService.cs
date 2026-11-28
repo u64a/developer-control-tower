@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Net;
 using System.Net.Http;
 using System.Security.Cryptography;
 using System.Text;
@@ -19,7 +20,7 @@ namespace ControlTower.Infrastructure.Archive
     /// <summary>
     /// Orchestrates the local safety-net copy for one <see cref="ArchiveGroup"/>
     /// project: first-run full clone, subsequent-run fetch + fast-forward,
-    /// dead-upstream detection via <c>git ls-remote</c>, and a hash-verified
+    /// remote-availability checks via <c>git ls-remote</c>, and a hash-verified
     /// latest-release capture. Read-only against hosted remotes; never
     /// deletes the local clone, even when the upstream has disappeared.
     /// </summary>
@@ -27,15 +28,6 @@ namespace ControlTower.Infrastructure.Archive
     {
         private static readonly TimeSpan FetchTimeout = TimeSpan.FromMinutes(10);
         private static readonly TimeSpan LsRemoteTimeout = TimeSpan.FromSeconds(20);
-
-        private static readonly string[] GoneRemoteMarkers =
-        {
-            "repository not found",
-            "could not read from remote repository",
-            "does not exist",
-            "access denied",
-            "403"
-        };
 
         private readonly IGitProcessAdapter _gitAdapter;
         private readonly IAsyncCloneService _cloneService;
@@ -154,20 +146,20 @@ namespace ControlTower.Infrastructure.Archive
 
             progress?.Report("Checking remote: " + request.ProjectId);
 
-            var (reachable, goneForGood, lsRemoteMessage) = await CheckRemoteAsync(
+            var (reachable, remoteUnavailable, lsRemoteMessage) = await CheckRemoteAsync(
                 request.RemoteUrl, archiveStorageRoot, ct).ConfigureAwait(false);
 
             if (!reachable)
             {
-                state.UpstreamStatus = goneForGood ? ArchiveUpstreamStatus.Unavailable : state.UpstreamStatus;
+                state.UpstreamStatus = remoteUnavailable ? ArchiveUpstreamStatus.Unavailable : state.UpstreamStatus;
                 state.LastError = lsRemoteMessage;
                 _stateStore.Save(state);
 
-                return goneForGood
+                return remoteUnavailable
                     ? new ArchiveSyncResult(
                         request.ProjectId,
                         ArchiveSyncStatus.UpstreamUnavailable,
-                        "Upstream is gone (" + lsRemoteMessage + "). Local archive copy kept untouched at " +
+                        "Remote is unavailable (" + lsRemoteMessage + "). Local archive copy kept untouched at " +
                         ExistingArchiveLocation(state, archivePath),
                         state.LastSyncedCommitSha)
                     : new ArchiveSyncResult(
@@ -279,19 +271,72 @@ namespace ControlTower.Infrastructure.Archive
                         state.LastSyncedCommitSha);
                 }
 
-                // Resolve the root (non-fork) upstream once per sync so the
-                // local archive tracks the original project's default branch
-                // — the user never pushes to their own fork, so "origin" is
-                // not a useful sync target.
+                // A fork publishing its own builds is authoritative for both
+                // source and releases. Release-less forks track an available root.
                 progress?.Report("Checking upstream: " + request.ProjectId);
+                ArchiveUpstreamRepo? resolvedUpstream = null;
                 ArchiveUpstreamRepo? upstream = null;
+                ArchiveReleaseInfo? selectedRelease = null;
+                var sourceSelectionNote = string.Empty;
+                const string unavailableUpstreamNote =
+                    "Original upstream is unavailable; using the reachable configured fork source instead.";
                 try
                 {
-                    upstream = await _releaseClient.ResolveUpstreamAsync(request.RemoteUrl, ct).ConfigureAwait(false);
+                    resolvedUpstream = await _releaseClient.ResolveUpstreamAsync(request.RemoteUrl, ct).ConfigureAwait(false);
+                    upstream = resolvedUpstream;
+                    if (resolvedUpstream != null)
+                    {
+                        progress?.Report("Checking fork release: " + request.ProjectId);
+                        selectedRelease = await _releaseClient
+                            .GetLatestReleaseAsync(request.RemoteUrl, ct)
+                            .ConfigureAwait(false);
+                        if (selectedRelease != null)
+                        {
+                            upstream = null;
+                            sourceSelectionNote = "Using the configured fork source and its own published release.";
+                        }
+                        else
+                        {
+                            try
+                            {
+                                selectedRelease = await _releaseClient
+                                    .GetLatestReleaseAsync(resolvedUpstream.CloneUrl, ct)
+                                    .ConfigureAwait(false);
+                                var (rootReachable, rootUnavailable, rootMessage) = await CheckRemoteAsync(
+                                    resolvedUpstream.CloneUrl, archiveStorageRoot, ct).ConfigureAwait(false);
+                                ct.ThrowIfCancellationRequested();
+                                if (!rootReachable)
+                                {
+                                    if (!rootUnavailable)
+                                    {
+                                        throw new HttpRequestException(
+                                            "Could not verify the original upstream: " + rootMessage);
+                                    }
+
+                                    upstream = null;
+                                    selectedRelease = null;
+                                    sourceSelectionNote = unavailableUpstreamNote;
+                                }
+                            }
+                            catch (HttpRequestException ex) when (
+                                ex.StatusCode == HttpStatusCode.NotFound ||
+                                ex.StatusCode == HttpStatusCode.Gone ||
+                                ex.StatusCode == HttpStatusCode.UnavailableForLegalReasons)
+                            {
+                                upstream = null;
+                                selectedRelease = null;
+                                sourceSelectionNote = unavailableUpstreamNote;
+                            }
+                        }
+                    }
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
-                    AppLogger.Warn("Archive", "Upstream resolution failed for " + request.ProjectId + ": " + ex.Message);
+                    state.LastError = "Archive source selection failed: " + ex.Message;
+                    _stateStore.Save(state);
+                    AppLogger.Warn("Archive", "Archive source selection failed for " + request.ProjectId + ": " + ex.Message);
+                    return new ArchiveSyncResult(
+                        request.ProjectId, ArchiveSyncStatus.Failed, state.LastError, state.LastSyncedCommitSha);
                 }
 
                 if (!TryRevalidateArchiveDestination(
@@ -313,54 +358,71 @@ namespace ControlTower.Infrastructure.Archive
                 if (upstream != null)
                 {
                     progress?.Report("Syncing upstream/" + upstream.DefaultBranch + ": " + request.ProjectId);
-                    var upstreamMessage = await FetchAndTrackUpstreamAsync(archivePath, upstream, ct).ConfigureAwait(false);
+                    var (upstreamMessage, upstreamUnavailable) = await FetchAndTrackUpstreamAsync(
+                        archivePath, upstream, ct).ConfigureAwait(false);
+                    ct.ThrowIfCancellationRequested();
                     if (upstreamMessage != null)
                     {
-                        state.LastError = upstreamMessage;
-                        _stateStore.Save(state);
-                        return new ArchiveSyncResult(request.ProjectId, ArchiveSyncStatus.Failed, upstreamMessage, state.LastSyncedCommitSha);
-                    }
+                        if (!upstreamUnavailable)
+                        {
+                            state.LastError = upstreamMessage;
+                            _stateStore.Save(state);
+                            return new ArchiveSyncResult(request.ProjectId, ArchiveSyncStatus.Failed, upstreamMessage, state.LastSyncedCommitSha);
+                        }
 
-                    commitSha = await ResolveHeadShaAsync(archivePath, ct).ConfigureAwait(false);
+                        upstream = null;
+                        selectedRelease = null;
+                        sourceSelectionNote = unavailableUpstreamNote;
+                    }
                 }
-                else if (!isNewClone)
+
+                if (upstream == null && !isNewClone)
                 {
                     progress?.Report("Syncing: " + request.ProjectId);
                     var updateMessage = await FetchAndFastForwardAsync(archivePath, ct).ConfigureAwait(false);
+                    ct.ThrowIfCancellationRequested();
                     if (updateMessage != null)
                     {
                         state.LastError = updateMessage;
                         _stateStore.Save(state);
                         return new ArchiveSyncResult(request.ProjectId, ArchiveSyncStatus.Failed, updateMessage, state.LastSyncedCommitSha);
                     }
-
-                    commitSha = await ResolveHeadShaAsync(archivePath, ct).ConfigureAwait(false);
-                }
-                else
-                {
-                    commitSha = await ResolveHeadShaAsync(archivePath, ct).ConfigureAwait(false);
                 }
 
+                commitSha = await ResolveHeadShaAsync(archivePath, ct).ConfigureAwait(false);
+                var selectedUpstreamFullName = upstream?.FullName ?? string.Empty;
+                var allowCachedCapture = string.Equals(
+                    state.UpstreamFullName ?? string.Empty,
+                    selectedUpstreamFullName,
+                    StringComparison.OrdinalIgnoreCase);
                 state.ArchivePath = archivePath;
                 state.UpstreamStatus = ArchiveUpstreamStatus.Reachable;
                 state.LastSyncedUtc = DateTime.UtcNow;
                 state.LastSyncedCommitSha = commitSha ?? state.LastSyncedCommitSha;
                 state.LastError = string.Empty;
-                state.UpstreamFullName = upstream?.FullName ?? string.Empty;
+                state.UpstreamFullName = selectedUpstreamFullName;
+                state.SourceSelectionNote = sourceSelectionNote;
 
-                // Prefer the resolved root upstream's releases — the user
-                // only ever keeps a fork and never publishes releases of
-                // their own, so "the latest release" means the original
-                // project's latest release.
+                // Capture from the selected tracking source, reusing release
+                // metadata and confirmed absence from source selection.
                 var releaseSourceUrl = upstream?.CloneUrl ?? request.RemoteUrl;
-                await CaptureLatestReleaseAsync(
-                    request,
-                    state,
-                    archiveStorageRoot,
-                    archivePath,
-                    releaseSourceUrl,
-                    progress,
-                    ct).ConfigureAwait(false);
+                if (resolvedUpstream != null && selectedRelease == null)
+                {
+                    MarkNoCurrentRelease(state);
+                }
+                else
+                {
+                    await CaptureLatestReleaseAsync(
+                        request,
+                        state,
+                        archiveStorageRoot,
+                        archivePath,
+                        releaseSourceUrl,
+                        progress,
+                        ct,
+                        releaseOverride: selectedRelease,
+                        allowCachedCapture: allowCachedCapture).ConfigureAwait(false);
+                }
 
                 if (state.ReleaseStatus == ArchiveReleaseStatus.Incomplete)
                 {
@@ -380,6 +442,11 @@ namespace ControlTower.Infrastructure.Archive
                 var message = state.ReleaseStatus == ArchiveReleaseStatus.NoCurrentRelease
                     ? "Archive source synced; no current release is published."
                     : "Archive source and current release archived at " + archivePath;
+                if (!string.IsNullOrWhiteSpace(sourceSelectionNote))
+                {
+                    message += " " + sourceSelectionNote;
+                    AppLogger.Info("Archive", request.ProjectId + ": " + sourceSelectionNote);
+                }
                 return new ArchiveSyncResult(
                     request.ProjectId, ArchiveSyncStatus.Succeeded, message, state.LastSyncedCommitSha);
             }
@@ -689,7 +756,7 @@ namespace ControlTower.Infrastructure.Archive
             }
         }
 
-        private async Task<(bool reachable, bool goneForGood, string message)> CheckRemoteAsync(
+        private async Task<(bool reachable, bool remoteUnavailable, string message)> CheckRemoteAsync(
             string remoteUrl, string workingDir, CancellationToken ct)
         {
             try
@@ -701,9 +768,15 @@ namespace ControlTower.Infrastructure.Archive
                     progress: null,
                     ct).ConfigureAwait(false);
 
+                ct.ThrowIfCancellationRequested();
                 if (run.Cancelled)
                 {
-                    return (false, false, "Remote check cancelled.");
+                    throw new OperationCanceledException("Remote check cancelled.", ct);
+                }
+
+                if (run.TimedOut)
+                {
+                    return (false, false, "Remote check timed out.");
                 }
 
                 if (run.ExitCode == 0)
@@ -712,10 +785,8 @@ namespace ControlTower.Infrastructure.Archive
                 }
 
                 var stderr = run.Stderr ?? string.Empty;
-                var isGone = GoneRemoteMarkers.Any(marker =>
-                    stderr.Contains(marker, StringComparison.OrdinalIgnoreCase));
                 var message = FirstNonEmptyLine(stderr, "git ls-remote failed (exit " + run.ExitCode + ").");
-                return (false, isGone, message);
+                return (false, IsUnavailableRemoteMessage(stderr), message);
             }
             catch (GitNotFoundException ex)
             {
@@ -723,10 +794,36 @@ namespace ControlTower.Infrastructure.Archive
             }
         }
 
+        private static bool IsUnavailableRemoteMessage(string message)
+        {
+            if (message.Contains("returned error: 401", StringComparison.OrdinalIgnoreCase) ||
+                message.Contains("returned error: 403", StringComparison.OrdinalIgnoreCase) ||
+                message.Contains("returned error: 429", StringComparison.OrdinalIgnoreCase) ||
+                message.Contains("returned error: 5", StringComparison.OrdinalIgnoreCase) ||
+                message.Contains("HTTP 401", StringComparison.OrdinalIgnoreCase) ||
+                message.Contains("HTTP 403", StringComparison.OrdinalIgnoreCase) ||
+                message.Contains("HTTP 429", StringComparison.OrdinalIgnoreCase) ||
+                message.Contains("HTTP 5", StringComparison.OrdinalIgnoreCase) ||
+                message.Contains("access denied", StringComparison.OrdinalIgnoreCase) ||
+                message.Contains("forbidden", StringComparison.OrdinalIgnoreCase) ||
+                message.Contains("unauthorized", StringComparison.OrdinalIgnoreCase) ||
+                message.Contains("rate limit", StringComparison.OrdinalIgnoreCase) ||
+                message.Contains("timed out", StringComparison.OrdinalIgnoreCase) ||
+                message.Contains("timeout", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            return message.Contains("repository not found", StringComparison.OrdinalIgnoreCase) ||
+                message.Contains("requested URL returned error: 404", StringComparison.OrdinalIgnoreCase) ||
+                message.Contains("requested URL returned error: 410", StringComparison.OrdinalIgnoreCase) ||
+                message.Contains("requested URL returned error: 451", StringComparison.OrdinalIgnoreCase);
+        }
+
         private async Task<string?> FetchAndFastForwardAsync(string archivePath, CancellationToken ct)
         {
             var fetch = await _gitAdapter.RunAsync(
-                new[] { "fetch", "--all", "--tags", "--prune" },
+                new[] { "fetch", "origin", "--tags", "--prune" },
                 archivePath, FetchTimeout, progress: null, ct).ConfigureAwait(false);
             if (fetch.ExitCode != 0)
             {
@@ -767,20 +864,34 @@ namespace ControlTower.Infrastructure.Archive
             return null;
         }
 
-        private async Task<string?> FetchAndTrackUpstreamAsync(string archivePath, ArchiveUpstreamRepo upstream, CancellationToken ct)
+        private async Task<(string? Error, bool RemoteUnavailable)> FetchAndTrackUpstreamAsync(
+            string archivePath, ArchiveUpstreamRepo upstream, CancellationToken ct)
         {
             var remoteError = await EnsureRemoteAsync(archivePath, "upstream", upstream.CloneUrl, ct).ConfigureAwait(false);
+            ct.ThrowIfCancellationRequested();
             if (remoteError != null)
             {
-                return remoteError;
+                return (remoteError, false);
             }
 
             var fetch = await _gitAdapter.RunAsync(
                 new[] { "fetch", "upstream", "--tags", "--prune" },
                 archivePath, FetchTimeout, progress: null, ct).ConfigureAwait(false);
+            ct.ThrowIfCancellationRequested();
+            if (fetch.Cancelled)
+            {
+                throw new OperationCanceledException("Upstream fetch cancelled.", ct);
+            }
+
+            if (fetch.TimedOut)
+            {
+                return ("git fetch upstream timed out.", false);
+            }
+
             if (fetch.ExitCode != 0)
             {
-                return FirstNonEmptyLine(fetch.Stderr, "git fetch upstream failed (exit " + fetch.ExitCode + ").");
+                var message = FirstNonEmptyLine(fetch.Stderr, "git fetch upstream failed (exit " + fetch.ExitCode + ").");
+                return (message, IsUnavailableRemoteMessage(fetch.Stderr ?? string.Empty));
             }
 
             // Create-or-reset the local branch directly onto upstream's tip —
@@ -791,12 +902,25 @@ namespace ControlTower.Infrastructure.Archive
             var checkoutRun = await _gitAdapter.RunAsync(
                 new[] { "checkout", "-B", upstream.DefaultBranch, "upstream/" + upstream.DefaultBranch },
                 archivePath, LsRemoteTimeout, progress: null, ct).ConfigureAwait(false);
-            if (checkoutRun.ExitCode != 0)
+            ct.ThrowIfCancellationRequested();
+            if (checkoutRun.Cancelled)
             {
-                return FirstNonEmptyLine(checkoutRun.Stderr, "git checkout upstream branch failed (exit " + checkoutRun.ExitCode + ").");
+                throw new OperationCanceledException("Upstream branch checkout cancelled.", ct);
             }
 
-            return null;
+            if (checkoutRun.TimedOut)
+            {
+                return ("git checkout upstream branch timed out.", false);
+            }
+
+            if (checkoutRun.ExitCode != 0)
+            {
+                return (
+                    FirstNonEmptyLine(checkoutRun.Stderr, "git checkout upstream branch failed (exit " + checkoutRun.ExitCode + ")."),
+                    false);
+            }
+
+            return (null, false);
         }
 
         // Adds the named remote if it's missing, or repoints it if the
@@ -845,11 +969,14 @@ namespace ControlTower.Infrastructure.Archive
             string archivePath,
             string releaseSourceUrl,
             IProgress<string>? progress,
-            CancellationToken ct)
+            CancellationToken ct,
+            ArchiveReleaseInfo? releaseOverride = null,
+            bool allowCachedCapture = true)
         {
             try
             {
-                var release = await _releaseClient.GetLatestReleaseAsync(releaseSourceUrl, ct).ConfigureAwait(false);
+                var release = releaseOverride ??
+                    await _releaseClient.GetLatestReleaseAsync(releaseSourceUrl, ct).ConfigureAwait(false);
                 if (release == null)
                 {
                     MarkNoCurrentRelease(state);
@@ -857,7 +984,8 @@ namespace ControlTower.Infrastructure.Archive
                 }
 
                 var expectedAssetNames = GetCanonicalAssetNames(release);
-                if (string.Equals(release.TagName, state.LastReleaseTag, StringComparison.Ordinal) &&
+                if (allowCachedCapture &&
+                    string.Equals(release.TagName, state.LastReleaseTag, StringComparison.Ordinal) &&
                     state.ReleaseStatus == ArchiveReleaseStatus.Captured &&
                     state.LastReleaseIntegrity == ArchiveReleaseIntegrity.Verified &&
                     HasCompleteReleaseCapture(archivePath, state, expectedAssetNames))
@@ -997,11 +1125,6 @@ namespace ControlTower.Infrastructure.Archive
         private static void MarkNoCurrentRelease(ArchiveRepoState state)
         {
             state.ReleaseStatus = ArchiveReleaseStatus.NoCurrentRelease;
-            state.LastReleaseTag = string.Empty;
-            state.LastReleaseIntegrity = ArchiveReleaseIntegrity.NotCaptured;
-            state.LastReleaseCapturedUtc = null;
-            state.LastReleaseDirectoryName = string.Empty;
-            state.LastReleaseAssetNames.Clear();
             state.LastReleaseError = string.Empty;
         }
 

@@ -133,6 +133,9 @@ namespace ControlTower.Infrastructure.Archive
                     case "UpstreamFullName":
                         state.UpstreamFullName = value;
                         break;
+                    case "SourceSelectionNote":
+                        state.SourceSelectionNote = value;
+                        break;
                 }
             }
 
@@ -165,7 +168,8 @@ namespace ControlTower.Infrastructure.Archive
                 "LastReleaseDirectoryName=" + (state.LastReleaseDirectoryName ?? string.Empty),
                 "LastReleaseAssetNames=" + string.Join("|", state.LastReleaseAssetNames ?? Array.Empty<string>()),
                 "LastReleaseError=" + (state.LastReleaseError ?? string.Empty),
-                "UpstreamFullName=" + (state.UpstreamFullName ?? string.Empty)
+                "UpstreamFullName=" + (state.UpstreamFullName ?? string.Empty),
+                "SourceSelectionNote=" + (state.SourceSelectionNote ?? string.Empty)
             };
 
             var path = GetPath(state.ProjectId ?? string.Empty);
